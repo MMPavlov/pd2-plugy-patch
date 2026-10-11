@@ -1,0 +1,9 @@
+# Never commit game binaries or backups - this repo only ships the patcher.
+*.dll
+*.dll.*
+*.exe
+*.mpq
+
+# local test runs
+test_*/
+*.log
