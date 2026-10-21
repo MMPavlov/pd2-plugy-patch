@@ -29,7 +29,7 @@ param([string]$Path, [int]$MaxAttempts = 10, [switch]$NoPause,
       [switch]$Testing, [string]$GameArgs = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "3.1.0"
+$VERSION = "3.2.0"
 
 # extra arguments for PlugY.exe, which passes them on to Game.exe
 $extra = @()
@@ -64,6 +64,13 @@ function Stop-Here([int]$code) {
         try { [void](Read-Host) } catch { Start-Sleep -Seconds 20 }
     }
     exit $code
+}
+
+# Anything unexpected (e.g. antivirus blocking PlugY.exe): show it instead of closing.
+trap {
+    Write-Host ""
+    Write-Host "  FAILED: $($_.Exception.Message)" -ForegroundColor Red
+    Stop-Here 1
 }
 
 Add-Type @"

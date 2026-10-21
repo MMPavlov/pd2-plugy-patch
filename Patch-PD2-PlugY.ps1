@@ -1,5 +1,5 @@
 <#
-    Patch-PD2-PlugY.ps1   v3.1.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v3.2.0   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
@@ -9,7 +9,8 @@
     Nothing is hardcoded to a particular ProjectDiablo.dll build. Every address is
     located by byte signature at run time, so this keeps working across PD2 updates.
     If PD2 ever restructures the code so a signature no longer matches, the script
-    stops and tells you which one - it never writes a partial patch.
+    stops and tells you which one - it never writes a partial patch. It also stops
+    if PD2's hook table is laid out differently from the tested builds (Season 14).
 
     SINGLE PLAYER ONLY. Do not use on the PD2 online realm.
 
@@ -27,7 +28,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "3.1.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "3.2.0"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -48,8 +49,17 @@ function Fail($m) {
 function Ok($m)   { Write-Host "  [ok] $m" -ForegroundColor Green }
 function Info($m) { Write-Host "  $m" -ForegroundColor DarkGray }
 
+# Anything unexpected: show the message and keep the window open, instead of
+# PowerShell printing it and the window closing before it can be read.
+trap {
+    Write-Host ""
+    Write-Host "  FAILED: $($_.Exception.Message)" -ForegroundColor Red
+    Stop-Here 1
+}
+
 if (-not $Path) { $Path = $PSScriptRoot }
 if (-not $Path) { $Path = (Get-Location).Path }
+$Path = (Resolve-Path -LiteralPath $Path).ProviderPath.TrimEnd('\')
 
 $dll    = Join-Path $Path "ProjectDiablo.dll"
 $d2c    = Join-Path $Path "D2Client.dll"
@@ -72,6 +82,36 @@ if (Get-Process -Name "Game" -ErrorAction SilentlyContinue) {
     Write-Host "  (Windows locks ProjectDiablo.dll while the game is open.)" -ForegroundColor Yellow
     Write-Host "  Nothing was changed." -ForegroundColor Yellow
     Stop-Here 1
+}
+
+# A game folder under Program Files can only be changed with administrator rights.
+# Check before touching anything; if they're missing, ask Windows for them and
+# carry on in the elevated window.
+function Test-Writable {
+    try {
+        $probe = Join-Path $Path ("pd2-plugy-patch-{0}.tmp" -f [guid]::NewGuid().ToString("N").Substring(0, 8))
+        [IO.File]::WriteAllBytes($probe, [byte[]]@())
+        Remove-Item -LiteralPath $probe -Force
+        [IO.File]::Open($dll, 'Open', 'ReadWrite', 'Read').Close()
+        return $true
+    } catch [UnauthorizedAccessException] { return $false }
+}
+if (-not (Test-Writable)) {
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+                 [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($admin) {
+        Fail ("Windows won't let this change ProjectDiablo.dll, even as administrator.`n" +
+              "          Check the file isn't read-only, and that antivirus isn't blocking it.")
+    }
+    Write-Host ""
+    Write-Host "  This folder needs administrator rights (it's probably under Program Files)." -ForegroundColor Yellow
+    Write-Host "  Windows will ask for permission - click Yes. The patch continues in a new window." -ForegroundColor Yellow
+    $elevated = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Path `"$Path`""
+    if ($Restore) { $elevated += " -Restore" }
+    if ($NoPause) { $elevated += " -NoPause" }
+    try { $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $elevated -Wait -PassThru }
+    catch { Fail "administrator rights weren't granted, so the patch can't change the game folder." }
+    exit $p.ExitCode
 }
 
 if ($Restore) {
@@ -219,6 +259,20 @@ if ($t.Patched) {
     $upgrading = $true
 }
 if ($b[$t.Jne] -ne 0x75) { Fail ("unexpected byte 0x{0:X2} at the gate." -f $b[$t.Jne]) }
+
+# The hook table must be laid out like the tested builds (Season 13): the panel hook
+# is entry 14, and the patch switches off everything after it. Season 14 puts 21 new
+# D2Client hooks in front of it, so cutting the table there would leave hooks running
+# that have never been tried alongside PlugY - all signatures still match, so stop here.
+$TESTED_PANEL_INDEX = 14
+$tableOff = RvaToOff $pe ([int64](U32 $b ($t.Gate + 10)) - $pe.ImageBase)
+$panelIndex = if ($tableOff -ge 0) { ($t.Entry - $tableOff) / 20 } else { -1 }
+if ($panelIndex -ne $TESTED_PANEL_INDEX) {
+    Fail ("this version of PD2 isn't supported yet.`n" +
+          "          Its hook table is laid out differently from Season 13 (panel hook is entry $panelIndex,`n" +
+          "          expected $TESTED_PANEL_INDEX) - Season 14 looks like this. Patching it is untested.`n" +
+          "          To keep using PlugY, roll back to Season 13 (see README).")
+}
 
 $origHandler = $t.Handler
 Ok ("panel hook entry  0x{0:X6}  handler 0x{1:X8}" -f $t.Entry, $origHandler)

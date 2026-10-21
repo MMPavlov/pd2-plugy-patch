@@ -6,6 +6,39 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 3.2.0 — 2026-10-21
+
+Fixes found while checking a complete setup: PD2 rolled back to Season 13 with the
+`s13p2m2` mirror, plus TDL's PlugY pack, plus this patch.
+
+### Added
+- **Asks for administrator rights when the game folder needs them** (e.g. under
+  `Program Files`). `Run-Patch.bat` and `Restore-Original.bat` first check they can
+  write to the folder. If they can't, they relaunch elevated: click *Yes* and the patch
+  carries on in a new window. Click *No* and nothing is changed.
+- **Stops on PD2 builds whose hook table is laid out differently from Season 13.**
+  The Season 14 open beta still matches every signature, but adds 21 D2Client hooks
+  ahead of the panel hook (entry 35 instead of 14). The patch switches off everything
+  after the panel hook, so on Season 14 those new hooks would stay on alongside PlugY,
+  untested. It now says *this version of PD2 isn't supported yet* and changes nothing.
+- README: **Complete setup from scratch**: PD2, then the Season 13 rollback, then TDL's
+  PlugY pack, then this patch, in that order, plus the two TDL tips that don't apply.
+
+### Fixed
+- **The window closed instantly on errors the scripts didn't expect**, such as
+  *access denied* in a `Program Files` folder or the DLL being in use by another
+  program. The raw PowerShell error flashed past unread. Both the patcher and the
+  launcher now show `FAILED: <reason>` and wait for Enter.
+
+### Checked
+- The `s13p2m2` mirror's `ProjectDiablo.dll` is byte-identical to `538A77B7`, one of
+  the two tested builds, and its `D2Client.dll` matches. Fresh patch, re-run, restore
+  and upgrade from 2.2.0 all pass on it.
+- TDL's zip doesn't overlap any file the mirror installs, and its `PlugY.ini` already
+  has `Param=-3dfx -plugy`.
+- No change to what's written into `ProjectDiablo.dll`. The output is byte-identical to
+  3.1.0's on both Season 13 builds.
+
 ## 3.1.0 — 2026-10-21
 
 Testing mode, for single-player packs such as

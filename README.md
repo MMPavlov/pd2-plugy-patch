@@ -24,12 +24,51 @@ when reporting a problem.
 | `Patch-PD2-PlugY.ps1` | the actual patcher (the `.bat` files just run it) |
 | `CHANGELOG.md` | what changed in each version |
 
+## Complete setup from scratch (Season 13 + TDL's PlugY pack)
+
+PD2 has moved on to Season 14, but [TDL's PlugY pack](https://github.com/TDLofCC/PD2-PlugY),
+its testing modpack and this patch are all made for **Season 13**. Set the game up
+in this order. Later steps overwrite files from earlier ones, so the order matters.
+
+1. **Diablo II: Lord of Destruction + Project Diablo 2**, installed and working. On a
+   fresh install, start it once through the PD2 launcher so it finishes setting up
+   (step 2 rolls the season back afterwards). If you've played before, **back up
+   `Diablo II\Save`** first.
+2. **Roll back to Season 13.** From Khazra89's client mirror, release
+   [`s13p2m2`](https://github.com/Khazra89/Unofficial-PD2-Client-Mirror-S12/releases/tag/s13p2m2),
+   download **`ProjectD2-S13P2M2-FullPD2Update.zip`** (about 490 MB). Extract it
+   **into your `Diablo II\ProjectD2` folder** and overwrite everything. The zip has no
+   `ProjectD2` folder inside, so its files go straight into `ProjectD2`, next to `Game.exe`.
+   You don't need the *JustTheLauncherUpdate* file.
+3. **PlugY.** From [TDLofCC/PD2-PlugY](https://github.com/TDLofCC/PD2-PlugY), download
+   `PD2-PlugY-with-Extras.zip` (or `PD2-PlugY.zip` for PlugY on its own). Copy its
+   `ProjectD2` and `Save` folders into your `Diablo II` folder, merging with what's there.
+   For the item pack and characters (in `Save\Library`), follow TDL's README. The item
+   pack replaces your own shared stash, so back it up first.
+4. **This patch.** Download the zip from
+   [Releases](https://github.com/MMPavlov/pd2-plugy-patch/releases), copy its files into
+   `Diablo II\ProjectD2` and double-click **`Run-Patch.bat`** (details under *Install*
+   below). It has to come after step 2, because step 2 replaces `ProjectDiablo.dll`.
+5. **Play** with **`Launch-PD2-PlugY.bat`**, or **`Launch-PD2-PlugY (testing).bat`** for the
+   testing modpack. Point your desktop shortcut at it.
+6. **Don't open the PD2 launcher again.** It updates the game to the current season,
+   which undoes steps 2 and 4. If that happens, redo steps 2 and 4.
+
+Two tips in TDL's README don't apply to this setup:
+
+- *Run PlugY.exe as administrator*: start the game with `Launch-PD2-PlugY.bat`
+  instead. `PlugY.exe` started directly fails with *Read process memory failed* on
+  current Windows 11 (see *Troubleshooting*).
+- *Run the game once via the launcher* (when PlugY doesn't load): that updates you out
+  of Season 13. Do it before step 2, never after.
+
 ## Install
 
 1. **Close Diablo II completely.**
 2. Copy all the files into your Project Diablo 2 folder — the one that has
    `ProjectDiablo.dll`, `D2Client.dll` and `PlugY.exe` in it.
-3. Double-click **`Run-Patch.bat`**.
+3. Double-click **`Run-Patch.bat`**. If your game is under `Program Files`, Windows asks
+   whether to allow changes. Click **Yes** and the patch carries on in a new window.
 4. Read the window. You want to see:
 
    ```
@@ -90,8 +129,17 @@ which silently removes the patch — the stat ranges just disappear again.
 
 You don't need a new version of the patch for each PD2 update. It doesn't use fixed
 addresses — it finds the code to change by searching for byte patterns, so it adapts
-to new builds automatically. (Tested on two different PD2 builds.) Running it on an
-already-patched DLL is harmless; it just says `ALREADY PATCHED`.
+to new builds automatically. (Tested on both Season 13 builds, `579987ED` and
+`538A77B7`; the `s13p2m2` mirror installs `538A77B7`.) Running it on an already-patched
+DLL is harmless; it just says `ALREADY PATCHED`.
+
+A new season can change more than addresses. Season 14 rearranges the hook table this
+patch edits, so on Season 14 the patch stops with *this version of PD2 isn't supported
+yet* and changes nothing.
+
+**On the Season 13 rollback** there shouldn't be any updates: don't open the PD2
+launcher. If it updated you anyway, redo the rollback (*Complete setup*, step 2), then
+run `Run-Patch.bat`.
 
 ## Troubleshooting
 
@@ -131,6 +179,17 @@ The DLL is fine — the problem is how the game is launched:
 PD2 changed its code enough that the patterns no longer match. Nothing was written,
 your DLL is untouched. The patch needs updating for that build.
 
+**`FAILED: this version of PD2 isn't supported yet`**
+Your game has been updated past Season 13 (the Season 14 open beta looks like this).
+The patterns still match, but PD2 now installs 21 extra hooks ahead of the one this
+patch redirects, and that combination hasn't been tested with PlugY. Nothing was
+changed. Roll back to Season 13 (*Complete setup*, step 2) and run `Run-Patch.bat` again.
+
+**Windows asks "Do you want to allow this app to make changes to your device?"**
+That's `Run-Patch.bat` asking for administrator rights, because your game folder needs
+them (usually because it's under `Program Files`). Click **Yes**. If you click **No**,
+nothing is changed.
+
 ## Known quirks
 
 - **Tooltips draw twice.** You'll see a faint second copy behind the augmented
@@ -157,7 +216,7 @@ Double-click **`Restore-Original.bat`** — it copies `ProjectDiablo.dll.stock-b
 
 `ProjectDiablo.dll` checks the command line for `-plugy` (stored as UTF-16, so a
 plain-text search of the file won't find it). When present, PD2 enters a
-compatibility mode and **skips installing its 35-entry runtime hook table** —
+compatibility mode and **skips installing its runtime hook table** (35 entries in Season 13) —
 and one of those hooks is what feeds item descriptions through BH's augmentation.
 
 The awkward part is hook **entry 14**: it replaces D2Client's inventory/stash panel
