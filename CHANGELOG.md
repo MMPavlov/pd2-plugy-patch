@@ -6,6 +6,31 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 3.1.0 — 2026-10-21
+
+Testing mode, for single-player packs such as
+[TDLofCC/PD2-PlugY](https://github.com/TDLofCC/PD2-PlugY).
+
+### Added
+- **`Launch-PD2-PlugY (testing).bat`** — starts the game with `-direct -txt` so it
+  loads the "testing" modpack's text files. Replaces the pack's `PlugY (testing)`
+  shortcut, which runs `cmd /c start PlugY.exe -direct -txt` and so fails with
+  *Read process memory failed* on current Windows 11 (`cmd.exe` is 64-bit).
+- Launcher options **`-Testing`** and **`-GameArgs "<args>"`**, passed on to
+  `PlugY.exe` and from there to the game; carried across the 32-bit hand-over.
+
+### Fixed
+- **README wrongly said shortcut arguments are ignored by `PlugY.exe`.** They aren't:
+  it builds `Game.exe [-w] <its own arguments> <Param=>` (confirmed from its code).
+- **README and patcher told everyone to use `Param=-plugy -3dfx -direct -txt`.**
+  Only `-plugy` is needed. Forcing `-direct -txt` would make a testing pack's
+  *normal* mode load the testing modpack.
+
+### Checked
+- TDL's `PlugY.dll` hooks the same D2Client offsets as the one this was developed
+  with (including `0x99A56`, used by the stash-button fix). Static check only.
+- No change to what's written into `ProjectDiablo.dll` (still the 3.0.0 code).
+
 ## 3.0.0 — 2026-10-21
 
 Major version: the code written into `ProjectDiablo.dll` changed.

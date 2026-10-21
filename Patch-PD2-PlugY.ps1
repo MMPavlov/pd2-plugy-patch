@@ -1,5 +1,5 @@
 <#
-    Patch-PD2-PlugY.ps1   v3.0.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v3.1.0   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
@@ -27,7 +27,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "3.0.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "3.1.0"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -194,7 +194,7 @@ if ($t.Patched) {
         Write-Host "  ============================================" -ForegroundColor Green
         Write-Host ""
         Write-Host "  If you still don't see stat ranges, make sure you start the game with" -ForegroundColor DarkGray
-        Write-Host "  Launch-PD2-PlugY.bat and PlugY.ini has  Param=-plugy -3dfx -direct -txt" -ForegroundColor DarkGray
+        Write-Host "  Launch-PD2-PlugY.bat and that PlugY.ini Param= includes -plugy" -ForegroundColor DarkGray
         Write-Host "  (Use -Restore / Restore-Original.bat to undo.)" -ForegroundColor DarkGray
         Stop-Here 0
     }
@@ -384,7 +384,7 @@ Write-Host "   SUCCESS - patch applied and verified" -ForegroundColor Green
 Write-Host "  ============================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Start the game with Launch-PD2-PlugY.bat (not PlugY.exe directly)." -ForegroundColor Cyan
-Write-Host "  PlugY.ini must contain:  Param=-plugy -3dfx -direct -txt"
+Write-Host "  PlugY.ini Param= must include  -plugy   (testing mode: Launch-PD2-PlugY (testing).bat)"
 Write-Host ""
 Write-Host "  Hover an item - you should see green [min - max] ranges, Max Sockets"
 Write-Host "  and the upgrade recipe. PlugY's stash page buttons now draw on top."

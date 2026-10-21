@@ -17,7 +17,8 @@ when reporting a problem.
 | file | what it is |
 |---|---|
 | `Launch-PD2-PlugY.bat` | **double-click this to play** — starts PD2 through PlugY (use it instead of `PlugY.exe`) |
-| `Launch-PD2-PlugY.ps1` | the launcher itself (the `.bat` just runs it) |
+| `Launch-PD2-PlugY (testing).bat` | same, in **testing mode** (`-direct -txt`, loads the testing modpack) |
+| `Launch-PD2-PlugY.ps1` | the launcher itself (the `.bat` files just run it) |
 | `Run-Patch.bat` | **double-click this** to apply the patch |
 | `Restore-Original.bat` | double-click to undo and put the original DLL back |
 | `Patch-PD2-PlugY.ps1` | the actual patcher (the `.bat` files just run it) |
@@ -38,15 +39,43 @@ when reporting a problem.
    ```
 
    The window stays open until you press Enter.
-5. Open `PlugY.ini` and make sure it has:
+5. Open `PlugY.ini` and check the `[LAUNCHING]` section. `Param=` must include
+   **`-plugy`** (what else is on that line is up to your setup), for example:
 
    ```
-   Param=-plugy -3dfx -direct -txt
+   Param=-3dfx -plugy
    Library=PlugY.dll
    ```
 
+   Only add `-direct -txt` there if you *always* want the game to load modded text
+   files. For switching between normal and testing mode, see below.
+
 6. Start the game with **`Launch-PD2-PlugY.bat`** rather than `PlugY.exe` directly —
    see *Read process memory failed* below. You can point your desktop shortcut at it.
+
+## Testing mode (modpacks)
+
+Single-player packs such as [TDLofCC/PD2-PlugY](https://github.com/TDLofCC/PD2-PlugY)
+include a **"testing" modpack** — modded text files in `ProjectD2\data\global\excel`
+that add cube recipes for rerolling, duplicating, socketing and so on. The game only
+loads them when started with `-direct -txt`, which is what the pack's
+**`PlugY (testing)`** shortcut does (`cmd /c start PlugY.exe -direct -txt`).
+
+That shortcut goes through `cmd.exe`, which is 64-bit, so on current Windows 11 it
+fails with *Read process memory failed* like any other shortcut. Use these instead:
+
+| to play | double-click |
+|---|---|
+| normally | `Launch-PD2-PlugY.bat` |
+| with the testing modpack | **`Launch-PD2-PlugY (testing).bat`** |
+
+The testing launcher adds `-direct -txt` and then works exactly like the normal one.
+The stat-ranges patch works the same in both modes. For other combinations, the
+launcher passes anything you give it on to the game:
+
+```
+Launch-PD2-PlugY.bat -GameArgs "-direct -txt -ns"
+```
 
 **Check it worked:** hover a unique or rare. You should see the green ranges,
 e.g. `+297% Enhanced Damage [200 - 300]`, plus Max Sockets and the upgrade recipe.
@@ -91,10 +120,12 @@ locks the DLL while the game is open. Nothing was changed.
 **`ALREADY PATCHED` but still no stat ranges**
 The DLL is fine — the problem is how the game is launched:
 - launch through **`Launch-PD2-PlugY.bat`** (or `PlugY.exe`), not the PD2 launcher or `Game.exe`
-- `PlugY.ini` must contain `Param=-plugy -3dfx -direct -txt`
+- `Param=` in `PlugY.ini` must include `-plugy`
 
-> `Param=` in `PlugY.ini` is what actually sets the game's command line.
-> Editing your desktop shortcut's arguments does nothing — PlugY.exe ignores them.
+> How `PlugY.exe` builds the game's command line:
+> `Game.exe [-w] <arguments given to PlugY.exe> <Param= from PlugY.ini>`.
+> So shortcut arguments *are* passed on — they're added in front of `Param=`.
+> (`-w` is added when PlugY.ini enables windowed mode.)
 
 **`FAILED: signature ... not found`**
 PD2 changed its code enough that the patterns no longer match. Nothing was written,

@@ -10,16 +10,32 @@
     itself under 32-bit PowerShell before starting PlugY, and as a safety net
     retries if PlugY still reports the error.
 
+    TESTING MODE
+      PD2 single-player packs (e.g. TDLofCC/PD2-PlugY) ship a "PlugY (testing)"
+      shortcut that runs  PlugY.exe -direct -txt  so the game loads the modded
+      text files in ProjectD2\data\global\excel (the "testing" modpack). That
+      shortcut goes through cmd.exe, which is 64-bit, so it hits the same error.
+      Use Launch-PD2-PlugY (testing).bat instead, or pass -Testing.
+
     USAGE
-      Double-click Launch-PD2-PlugY.bat, or:
-      .\Launch-PD2-PlugY.ps1 [-Path <PD2 folder>] [-MaxAttempts 10]
+      Double-click Launch-PD2-PlugY.bat            (normal)
+      Double-click Launch-PD2-PlugY (testing).bat  (testing modpack)
+      .\Launch-PD2-PlugY.ps1 [-Testing] [-GameArgs "<extra PlugY.exe args>"]
+                             [-Path <PD2 folder>] [-MaxAttempts 10]
 #>
 
 [CmdletBinding()]
-param([string]$Path, [int]$MaxAttempts = 10, [switch]$NoPause)
+param([string]$Path, [int]$MaxAttempts = 10, [switch]$NoPause,
+      [switch]$Testing, [string]$GameArgs = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "3.0.0"
+$VERSION = "3.1.0"
+
+# extra arguments for PlugY.exe, which passes them on to Game.exe
+$extra = @()
+if ($Testing)  { $extra += @("-direct", "-txt") }
+if ($GameArgs) { $extra += @($GameArgs -split '\s+' | Where-Object { $_ }) }
+$extra = @($extra | Select-Object -Unique)
 
 # PlugY.exe must be started from a 32-bit parent (see header). If we're running as
 # 64-bit PowerShell, hand over to the 32-bit one and pass the result straight back.
@@ -29,6 +45,9 @@ if ([Environment]::Is64BitProcess) {
         $relaunch = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, "-MaxAttempts", $MaxAttempts)
         if ($Path)    { $relaunch += @("-Path", $Path) }
         if ($NoPause) { $relaunch += "-NoPause" }
+        if ($Testing) { $relaunch += "-Testing" }
+        # colon form: a value starting with "-" would otherwise be read as a parameter name
+        if ($GameArgs) { $relaunch += "-GameArgs:$GameArgs" }
         & $ps32 @relaunch
         exit $LASTEXITCODE
     }
@@ -91,6 +110,8 @@ function Clear-Attempt {
 Write-Host ""
 Write-Host "PD2 + PlugY launcher  v$VERSION" -ForegroundColor Cyan
 Write-Host "------------------------------"
+if ($Testing) { Write-Host "  mode: TESTING (modded text files: -direct -txt)" -ForegroundColor Magenta }
+if ($extra.Count -gt 0) { Write-Host ("  PlugY.exe " + ($extra -join ' ')) -ForegroundColor DarkGray }
 
 if (-not (Test-Path $plugyExe)) {
     Write-Host "  PlugY.exe not found in '$Path'." -ForegroundColor Red
@@ -109,7 +130,8 @@ if ((Get-StuckGames) -or (Get-Process -Name "PlugY" -ErrorAction SilentlyContinu
 
 for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
     Write-Host ("  attempt {0}/{1}... " -f $attempt, $MaxAttempts) -NoNewline
-    $p = Start-Process -FilePath $plugyExe -WorkingDirectory $Path -PassThru
+    if ($extra.Count -gt 0) { $p = Start-Process -FilePath $plugyExe -ArgumentList $extra -WorkingDirectory $Path -PassThru }
+    else                    { $p = Start-Process -FilePath $plugyExe -WorkingDirectory $Path -PassThru }
 
     $result = $null; $msg = $null
     $deadline = (Get-Date).AddSeconds(60)
