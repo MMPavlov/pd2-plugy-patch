@@ -6,6 +6,29 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 3.0.0 — 2026-10-21
+
+Major version: the code written into `ProjectDiablo.dll` changed.
+
+### Fixed
+- **PlugY's stash page buttons are now visible.** They were hidden under PD2's
+  top border because PD2's frame was drawn over them. The new panel code calls
+  PlugY's button routine once more *after* PD2's renderer, only while the stash is
+  open (checked via D2Client's UI state), so the buttons land on top. Tested:
+  buttons visible and clickable, one click = one page, nothing drawn over the
+  inventory or Horadric Cube, stat ranges unaffected.
+- **Survives DLL relocation.** The old thunk used PD2's module table by absolute
+  address, which would break if Windows loaded `ProjectDiablo.dll` elsewhere. The
+  new code is position-independent (`call $+5 / pop`).
+
+### Changed
+- The injected code is now 57 bytes, packed into several small `int3` gaps and
+  chained with jumps, instead of needing one 17-byte gap.
+- **Automatic upgrade:** run on a DLL patched by 2.x, it re-patches from
+  `ProjectDiablo.dll.stock-backup`, so updating is just running `Run-Patch.bat`.
+- Signature search is much faster (`[Array]::IndexOf` anchoring).
+- Launcher reports 3.0.0 too (no functional change).
+
 ## 2.2.0 — 2026-10-21
 
 ### Added

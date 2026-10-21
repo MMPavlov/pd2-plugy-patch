@@ -106,13 +106,14 @@ your DLL is untouched. The patch needs updating for that build.
   tooltip, most noticeable on rings. Cosmetic — everything is readable and correct.
 - **Occasional hang on the loading screen.** If it happens, end `Game.exe` in Task
   Manager and relaunch. Save often.
-- **PlugY's stash page buttons are partly hidden** under PD2's top border. They still
-  work if you click them. Moving them via the `PosX…`/`PosY…` settings in `PlugY.ini`
-  doesn't help: PD2's frame covers the whole panel *and* the margin beside it, and
-  only its text fields are see-through.
+- **Stash page names overlap.** PlugY's red `Shared Page N` and PD2's
+  `Personal Bank` are printed in the same spot at the bottom of the stash.
 
 All three come from the same cause: PD2 and PlugY each want to draw the
 inventory/stash panel, so the patch runs both renderers — PlugY's first, PD2's on top.
+
+*Fixed in 3.0.0:* PlugY's stash page buttons used to be hidden under PD2's top
+border. They're now redrawn on top of PD2's frame whenever the stash is open.
 
 ## Undo
 
@@ -132,17 +133,29 @@ The awkward part is hook **entry 14**: it replaces D2Client's inventory/stash pa
 draw (`D2Client+0x99440`), which is the exact function PlugY patches *inside* to add
 its stash pages. Both mods want the same function.
 
-The patch, 23 bytes total:
+The patch:
 
 1. **Gate** — `jne` → `nop nop`, so the hook table installs even under `-plugy`.
-2. **Thunk** — 17 bytes written into unused `int3` padding:
+2. **New panel code** — 57 bytes, packed into unused `int3` padding in `.text`
+   (spread over several small gaps and chained with jumps):
    ```asm
-   mov  eax, [moduleTable]   ; PD2's table, slot 0 = D2Client base
-   add  eax, 0x99440         ; D2Client's panel draw (PlugY's stash pages live here)
-   call eax                  ; run it
-   jmp  <PD2 renderer>       ; then PD2's renderer (BH augmentation)
+   push esi
+   call $+5 / pop eax          ; where am I? (position-independent)
+   mov  esi, [eax + d]         ; PD2's module table, slot 0 = D2Client base
+   lea  eax, [esi + 0x99440]   ; D2Client's panel draw (PlugY's stash pages live here)
+   call eax                    ;   1. run it
+   call <PD2 renderer>         ;   2. PD2's renderer (BH augmentation, PD2's frame)
+   cmp  dword [esi + uiState+0x19*4], 0   ; stash open?
+   jnz  buttons
+   pop  esi / ret
+   buttons:                    ;   3. PlugY's stash-button routine again, on top
+   mov  eax, [esi + 0x99A56]   ;      (the call PlugY redirected - read at run time)
+   lea  eax, [esi + eax + 0x99A5A]
+   pop  esi / jmp eax
    ```
-3. **Redirect** — entry 14 now points at the thunk instead of PD2's renderer.
+   Nothing in it is an absolute address, so it still works if Windows loads
+   ProjectDiablo.dll or D2Client.dll somewhere other than their usual address.
+3. **Redirect** — entry 14 now points at that code instead of PD2's renderer.
 4. **Terminate** — the table stops after entry 14; later hooks assume PD2 owns
    the panel and would conflict.
 
@@ -155,7 +168,12 @@ Everything is located by signature at run time:
 | panel hook entry | 20-byte record `{0, 0x000C3B18, handler, 1}` |
 | module base table | `8B 04 C5 ?? ?? ?? 10` in the hook installer |
 | panel-draw target | decoded from the `call` at `D2Client.dll` RVA `0xC3B17` |
-| code cave | first run of ≥17 `0xCC` bytes in `.text` |
+| stash-button call | `call` at `D2Client.dll` RVA `0x99A55` (the one PlugY hooks), checked |
+| stash-open flag | D2Client's `GetUIState` (`83 F8 26 … 8B 04 85 ???????? C3`), UI index `0x19` |
+| code caves | runs of ≥12 `0xCC` bytes in the mapped part of `.text` |
+
+Running it on a DLL patched by an older version upgrades it automatically, starting
+from `ProjectDiablo.dll.stock-backup`.
 
 Before writing anything the script checks every site; after writing it re-reads the
 file and verifies each change, restoring the backup automatically if anything is off.

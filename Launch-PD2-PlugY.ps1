@@ -19,7 +19,7 @@
 param([string]$Path, [int]$MaxAttempts = 10, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
-$VERSION = "2.2.0"
+$VERSION = "3.0.0"
 
 # PlugY.exe must be started from a 32-bit parent (see header). If we're running as
 # 64-bit PowerShell, hand over to the 32-bit one and pass the result straight back.
