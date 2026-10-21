@@ -6,6 +6,27 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 2.2.0 — 2026-10-21
+
+### Added
+- **`Launch-PD2-PlugY.bat` / `.ps1`** — starts the game and fixes
+  `PlugY: Read process memory failed.`, which suddenly stopped the game launching.
+  `PlugY.exe` now fails almost every time it's started by a 64-bit program (Explorer,
+  shortcuts, normal PowerShell) and works when started by a 32-bit one. The launcher
+  runs through 32-bit PowerShell — and relaunches itself that way if started from
+  64-bit — retries if PlugY still fails, cleans up the stuck `Game.exe` a failed
+  attempt leaves behind, and shows any *other* PlugY error instead of hiding it.
+  Measured: 12/12 launches failed from 64-bit parents, 5/5 worked from 32-bit.
+
+### Changed
+- README: launch with the launcher instead of `PlugY.exe`; new troubleshooting entry;
+  hidden stash page buttons listed under known quirks.
+
+### Investigated, not changed
+- Moving PlugY's stash page buttons out from under PD2's top border via `PlugY.ini`
+  doesn't work: PD2's frame paints the whole panel and the margin beside it.
+  Fixing it needs PlugY's buttons drawn after PD2's frame, i.e. a DLL change.
+
 ## 2.1.0 — 2026-10-11
 
 Usability fixes from the first round of friends trying it.

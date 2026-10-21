@@ -16,6 +16,8 @@ when reporting a problem.
 
 | file | what it is |
 |---|---|
+| `Launch-PD2-PlugY.bat` | **double-click this to play** — starts PD2 through PlugY (use it instead of `PlugY.exe`) |
+| `Launch-PD2-PlugY.ps1` | the launcher itself (the `.bat` just runs it) |
 | `Run-Patch.bat` | **double-click this** to apply the patch |
 | `Restore-Original.bat` | double-click to undo and put the original DLL back |
 | `Patch-PD2-PlugY.ps1` | the actual patcher (the `.bat` files just run it) |
@@ -24,7 +26,7 @@ when reporting a problem.
 ## Install
 
 1. **Close Diablo II completely.**
-2. Copy all three files into your Project Diablo 2 folder — the one that has
+2. Copy all the files into your Project Diablo 2 folder — the one that has
    `ProjectDiablo.dll`, `D2Client.dll` and `PlugY.exe` in it.
 3. Double-click **`Run-Patch.bat`**.
 4. Read the window. You want to see:
@@ -43,7 +45,8 @@ when reporting a problem.
    Library=PlugY.dll
    ```
 
-6. Launch through `PlugY.exe` as usual.
+6. Start the game with **`Launch-PD2-PlugY.bat`** rather than `PlugY.exe` directly —
+   see *Read process memory failed* below. You can point your desktop shortcut at it.
 
 **Check it worked:** hover a unique or rare. You should see the green ranges,
 e.g. `+297% Enhanced Damage [200 - 300]`, plus Max Sockets and the upgrade recipe.
@@ -63,6 +66,19 @@ already-patched DLL is harmless; it just says `ALREADY PATCHED`.
 
 ## Troubleshooting
 
+**`PlugY: Read process memory failed.` — the game won't start**
+Start it with `Launch-PD2-PlugY.bat` instead of `PlugY.exe` or a shortcut to it.
+
+On current Windows 11 builds, `PlugY.exe` fails with this error almost every time
+it is started by a 64-bit program — and Explorer, desktop shortcuts and normal
+PowerShell are all 64-bit. Started from a 32-bit program it works. The launcher
+runs through 32-bit PowerShell, retries automatically if PlugY still fails, and
+cleans up the stuck `Game.exe` a failed attempt leaves behind. It isn't caused by
+the stat-ranges patch: it happens before PlugY even loads its DLL.
+
+(Measured on one machine: 12 of 12 launches from 64-bit parents failed, 5 of 5 from
+a 32-bit parent worked. It started between 17 Sep and 21 Oct 2026.)
+
 **The window flashed open and closed / "it went so fast it didn't do anything"**
 Use `Run-Patch.bat` instead of right-click → *Run with PowerShell*. Older versions
 of this script closed the window instantly, hiding any error. This version always
@@ -74,7 +90,7 @@ locks the DLL while the game is open. Nothing was changed.
 
 **`ALREADY PATCHED` but still no stat ranges**
 The DLL is fine — the problem is how the game is launched:
-- launch through **`PlugY.exe`**, not the PD2 launcher or `Game.exe`
+- launch through **`Launch-PD2-PlugY.bat`** (or `PlugY.exe`), not the PD2 launcher or `Game.exe`
 - `PlugY.ini` must contain `Param=-plugy -3dfx -direct -txt`
 
 > `Param=` in `PlugY.ini` is what actually sets the game's command line.
@@ -90,9 +106,13 @@ your DLL is untouched. The patch needs updating for that build.
   tooltip, most noticeable on rings. Cosmetic — everything is readable and correct.
 - **Occasional hang on the loading screen.** If it happens, end `Game.exe` in Task
   Manager and relaunch. Save often.
+- **PlugY's stash page buttons are partly hidden** under PD2's top border. They still
+  work if you click them. Moving them via the `PosX…`/`PosY…` settings in `PlugY.ini`
+  doesn't help: PD2's frame covers the whole panel *and* the margin beside it, and
+  only its text fields are see-through.
 
-Both come from the same cause: PD2 and PlugY each want to draw the inventory/stash
-panel, so the patch runs both renderers.
+All three come from the same cause: PD2 and PlugY each want to draw the
+inventory/stash panel, so the patch runs both renderers — PlugY's first, PD2's on top.
 
 ## Undo
 

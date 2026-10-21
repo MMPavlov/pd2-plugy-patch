@@ -1,5 +1,5 @@
 <#
-    Patch-PD2-PlugY.ps1   v2.1.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v2.2.0   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
@@ -26,7 +26,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "2.1.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "2.2.0"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
