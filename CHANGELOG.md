@@ -6,6 +6,41 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 3.2.1 — 2026-10-24
+
+Season 14 is live. Fixes for people whose game the PD2 launcher just updated.
+
+### Fixed
+- **An S14 DLL patched by an older version was reported as unpatched.** Versions
+  before 3.2.0 didn't check the season, and the v3.1.0 README said to re-run
+  `Run-Patch.bat` after every update, so some Season 14 DLLs got patched. Season 14
+  has a second match for the `-plugy` gate pattern. Once the real gate was patched,
+  3.2.0 found the other one and said *isn't supported yet ... Nothing was changed*
+  (with "entry -1"), without mentioning the DLL was already patched. The gate is now
+  the match whose table holds the panel hook entry. On such a DLL the patcher says
+  *PATCHED BY AN OLDER VERSION - NOT SUPPORTED* and points to `Restore-Original.bat`.
+- **The season check now runs before "already patched"**, so an old patch on an
+  unsupported build is never reported as `ALREADY PATCHED`.
+- **`Restore-Original.bat` could put a Season 13 DLL into a Season 14 game.** After
+  an update, `ProjectDiablo.dll.stock-backup` is still the previous season's DLL, and
+  the old restore copied it over blindly. It now restores only when the DLL is patched
+  and the backup is from the same build. Otherwise it says *nothing to restore* or
+  *from a different PD2 version*, and changes nothing.
+- The *not supported* message no longer says "to keep using PlugY": PlugY doesn't
+  need this patch, it's the stat ranges that do.
+
+### Changed
+- README: **Which season?** comparison, plus a Season 14 setup (PlugY without stat
+  ranges, no testing modpack) next to the Season 13 rollback, and a section for
+  people patched on Season 13 who've just been updated to Season 14.
+- Launcher reports 3.2.1 too (no functional change).
+
+### Checked
+- Season 14 live (`ProjectDiablo.dll` 5,252,096 bytes) has the same hook table layout
+  as the open beta: 65 entries, panel hook at 35. Refused, nothing written.
+- `D2Client.dll` in Season 14 is byte-identical to Season 13's.
+- Season 13: output byte-identical to 3.1.0 and 3.2.0 on both builds.
+
 ## 3.2.0 — 2026-10-21
 
 Fixes found while checking a complete setup: PD2 rolled back to Season 13 with the

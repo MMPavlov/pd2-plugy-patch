@@ -1,5 +1,5 @@
 <#
-    Patch-PD2-PlugY.ps1   v3.2.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v3.2.1   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
@@ -28,7 +28,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "3.2.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "3.2.1"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -114,14 +114,6 @@ if (-not (Test-Writable)) {
     exit $p.ExitCode
 }
 
-if ($Restore) {
-    if (-not (Test-Path $backup)) { Fail "no backup found at ProjectDiablo.dll.stock-backup" }
-    Copy-Item $backup $dll -Force
-    Ok "restored the original ProjectDiablo.dll"
-    Stop-Here 0
-}
-if (-not (Test-Path $d2c)) { Fail "D2Client.dll not found - needed to locate the panel-draw function." }
-
 # ------------------------------------------------------------- helpers ----
 
 function U16([byte[]]$a, [int]$o) { [BitConverter]::ToUInt16($a, $o) }
@@ -158,13 +150,14 @@ function RvaToOff($pe, [int64]$r) {
 }
 
 # masked signature search; -1 = wildcard byte. Anchors on the first non-zero
-# fixed byte and lets [Array]::IndexOf do the scanning.
-function FindSig([byte[]]$a, [int[]]$sig) {
+# fixed byte and lets [Array]::IndexOf do the scanning. Returns the first match
+# at or after $from.
+function FindSig([byte[]]$a, [int[]]$sig, [int]$from = 0) {
     $anchor = -1
     for ($k = 0; $k -lt $sig.Count; $k++) { if ($sig[$k] -gt 0) { $anchor = $k; break } }
     $av = [byte]$sig[$anchor]
     $last = $a.Length - $sig.Count
-    $i = [Array]::IndexOf($a, $av, $anchor)
+    $i = [Array]::IndexOf($a, $av, $from + $anchor)
     while ($i -ge 0) {
         $s = $i - $anchor
         if ($s -gt $last) { break }
@@ -179,35 +172,73 @@ function FindSig([byte[]]$a, [int[]]$sig) {
 }
 
 # Locates everything that gets patched in a ProjectDiablo.dll image.
-function Find-Targets([byte[]]$a, [string]$label) {
-    # 1. the -plugy gate:  cmp byte [flag],0 / jne short / mov ecx,<table> / call <installer>
-    #    unpatched it reads "75 xx"; once patched "90 90"
-    $gate = FindSig $a @(0x80,0x3D,-1,-1,-1,-1,0x00, 0x75,-1, 0xB9,-1,-1,-1,-1, 0xE8)
-    if ($gate -lt 0) { $gate = FindSig $a @(0x80,0x3D,-1,-1,-1,-1,0x00, 0x90,0x90, 0xB9,-1,-1,-1,-1, 0xE8) }
-    if ($gate -lt 0) { Fail "signature 1 (the -plugy gate) not found in $label - PD2 changed too much, the patch needs re-deriving." }
-    $jne = $gate + 7
-
+# -Soft: return $null instead of stopping when something isn't found.
+function Find-Targets([byte[]]$a, [string]$label, $pe, [switch]$Soft) {
     # 2. the panel hook entry: { module=0, RVA=0x000C3B18, handler, flag=1 }
     $entry = FindSig $a @(0x00,0x00,0x00,0x00, 0x18,0x3B,0x0C,0x00, -1,-1,-1,0x10, 0x01,0x00,0x00,0x00)
-    if ($entry -lt 0) { Fail "signature 2 (the D2Client panel hook entry) not found in $label." }
+    if ($entry -lt 0) { if ($Soft) { return $null }; Fail "signature 2 (the D2Client panel hook entry) not found in $label." }
+
+    # 1. the -plugy gate:  cmp byte [flag],0 / jne short / mov ecx,<table> / call <installer>
+    #    unpatched it reads "75 xx"; once patched "90 90". Season 14 has a second
+    #    match elsewhere, so take the one whose table holds the panel hook entry.
+    $gate = -1; $tableOff = -1
+    foreach ($jcc in @(@(0x75, -1), @(0x90, 0x90))) {
+        $sig = @(0x80,0x3D,-1,-1,-1,-1,0x00) + $jcc + @(0xB9,-1,-1,-1,-1, 0xE8)
+        $at = FindSig $a $sig
+        while ($at -ge 0) {
+            $to = RvaToOff $pe ([int64](U32 $a ($at + 10)) - $pe.ImageBase)
+            if ($to -ge 0 -and $entry -ge $to -and ($entry - $to) % 20 -eq 0 -and ($entry - $to) / 20 -lt 256) { $gate = $at; $tableOff = $to; break }
+            $at = FindSig $a $sig ($at + 1)
+        }
+        if ($gate -ge 0) { break }
+    }
+    if ($gate -lt 0) { if ($Soft) { return $null }; Fail "signature 1 (the -plugy gate) not found in $label - PD2 changed too much, the patch needs re-deriving." }
+    $jne = $gate + 7
 
     # 3. PD2's module base table:  mov eax,[<table> + eax*8]  (slot 0 = D2Client)
     $mt = FindSig $a @(0x8B,0x04,0xC5,-1,-1,-1,0x10)
-    if ($mt -lt 0) { Fail "signature 3 (module base table) not found in $label." }
+    if ($mt -lt 0) { if ($Soft) { return $null }; Fail "signature 3 (module base table) not found in $label." }
 
     [PSCustomObject]@{
-        Gate    = $gate
-        Jne     = $jne
-        Patched = ($a[$jne] -eq 0x90 -and $a[$jne + 1] -eq 0x90)
-        Entry   = $entry
-        Handler = [int64](U32 $a ($entry + 8))
-        ModTbl  = [int64](U32 $a ($mt + 3))
+        Gate       = $gate
+        Jne        = $jne
+        Patched    = ($a[$jne] -eq 0x90 -and $a[$jne + 1] -eq 0x90)
+        Entry      = $entry
+        PanelIndex = ($entry - $tableOff) / 20
+        Handler    = [int64](U32 $a ($entry + 8))
+        ModTbl     = [int64](U32 $a ($mt + 3))
     }
 }
 
 # signature of the start of the code this version writes:
 #   push esi / call $+5 / pop eax
 $V3_HEAD = [byte[]](0x56, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x58)
+
+# ------------------------------------------------------------- restore ----
+
+if ($Restore) {
+    if (-not (Test-Path $backup)) { Fail "no backup found at ProjectDiablo.dll.stock-backup" }
+    # Only put the backup back over a patched copy of the same DLL. After a PD2 update
+    # the backup is the previous version's DLL, and copying it in would break the game.
+    $cur = [System.IO.File]::ReadAllBytes($dll)
+    $ct  = Find-Targets $cur "ProjectDiablo.dll" (Get-PE $cur "ProjectDiablo.dll") -Soft
+    if (-not $ct -or -not $ct.Patched) {
+        Ok "ProjectDiablo.dll isn't patched - nothing to restore."
+        Info "(A PD2 update replaces it with an unpatched one, so this is normal after an update.)"
+        Stop-Here 0
+    }
+    $old = [System.IO.File]::ReadAllBytes($backup)
+    $ot  = Find-Targets $old "ProjectDiablo.dll.stock-backup" (Get-PE $old "ProjectDiablo.dll.stock-backup") -Soft
+    if (-not $ot -or $ot.Patched -or $old.Length -ne $cur.Length -or $ot.Gate -ne $ct.Gate -or $ot.Entry -ne $ct.Entry) {
+        Fail ("ProjectDiablo.dll.stock-backup is from a different PD2 version than ProjectDiablo.dll,`n" +
+              "          so putting it back would break the game. Get the original DLL back with the`n" +
+              "          PD2 launcher instead (on the Season 13 rollback: extract the S13 zip again).")
+    }
+    Copy-Item $backup $dll -Force
+    Ok "restored the original ProjectDiablo.dll"
+    Stop-Here 0
+}
+if (-not (Test-Path $d2c)) { Fail "D2Client.dll not found - needed to locate the panel-draw function." }
 
 # --------------------------------------------------------- ProjectDiablo ----
 
@@ -219,8 +250,34 @@ Write-Host ""
 Write-Host "Locating (by signature, not fixed offsets)..." -ForegroundColor Cyan
 Info "this takes a few seconds"
 
-$t = Find-Targets $b "ProjectDiablo.dll"
+$t = Find-Targets $b "ProjectDiablo.dll" $pe
 Ok ("-plugy gate       0x{0:X6}" -f $t.Gate)
+
+# The hook table must be laid out like the tested builds (Season 13): the panel hook
+# is entry 14, and the patch switches off everything after it. Season 14 puts 21 new
+# D2Client hooks in front of it, so cutting the table there would leave hooks running
+# that have never been tried alongside PlugY - all signatures still match, so stop here.
+# Checked before "already patched", because versions before 3.2.0 patched Season 14.
+$TESTED_PANEL_INDEX = 14
+if ($t.PanelIndex -ne $TESTED_PANEL_INDEX) {
+    $why = ("          Its hook table is laid out differently from Season 13 (panel hook is entry {0},`n" +
+            "          expected {1}) - Season 14 looks like this. The patch is untested on it.") -f $t.PanelIndex, $TESTED_PANEL_INDEX
+    if ($t.Patched) {
+        Write-Host ""
+        Write-Host "  ==================================================" -ForegroundColor Yellow
+        Write-Host "   PATCHED BY AN OLDER VERSION - NOT SUPPORTED" -ForegroundColor Yellow
+        Write-Host "  ==================================================" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  ProjectDiablo.dll was patched by a version of this script before 3.2.0,"
+        Write-Host "  which didn't check the PD2 version. This PD2 version isn't supported:"
+        Write-Host $why
+        Write-Host ""
+        Write-Host "  To undo it, double-click Restore-Original.bat." -ForegroundColor Yellow
+        Stop-Here 1
+    }
+    Fail ("this version of PD2 isn't supported yet.`n$why`n" +
+          "          For stat ranges with PlugY, roll back to Season 13 (see README).")
+}
 
 $upgrading = $false
 if ($t.Patched) {
@@ -249,7 +306,7 @@ if ($t.Patched) {
     }
     $bb  = [System.IO.File]::ReadAllBytes($backup)
     $bpe = Get-PE $bb "ProjectDiablo.dll.stock-backup"
-    $bt  = Find-Targets $bb "ProjectDiablo.dll.stock-backup"
+    $bt  = Find-Targets $bb "ProjectDiablo.dll.stock-backup" $bpe
     if ($bt.Patched -or $bb.Length -ne $b.Length -or $bt.Entry -ne $t.Entry -or $bt.Gate -ne $t.Gate) {
         Fail ("ProjectDiablo.dll.stock-backup doesn't match this DLL's build.`n" +
               "          Get the original DLL back (PD2 launcher > verify/repair files), then run this again.")
@@ -259,20 +316,6 @@ if ($t.Patched) {
     $upgrading = $true
 }
 if ($b[$t.Jne] -ne 0x75) { Fail ("unexpected byte 0x{0:X2} at the gate." -f $b[$t.Jne]) }
-
-# The hook table must be laid out like the tested builds (Season 13): the panel hook
-# is entry 14, and the patch switches off everything after it. Season 14 puts 21 new
-# D2Client hooks in front of it, so cutting the table there would leave hooks running
-# that have never been tried alongside PlugY - all signatures still match, so stop here.
-$TESTED_PANEL_INDEX = 14
-$tableOff = RvaToOff $pe ([int64](U32 $b ($t.Gate + 10)) - $pe.ImageBase)
-$panelIndex = if ($tableOff -ge 0) { ($t.Entry - $tableOff) / 20 } else { -1 }
-if ($panelIndex -ne $TESTED_PANEL_INDEX) {
-    Fail ("this version of PD2 isn't supported yet.`n" +
-          "          Its hook table is laid out differently from Season 13 (panel hook is entry $panelIndex,`n" +
-          "          expected $TESTED_PANEL_INDEX) - Season 14 looks like this. Patching it is untested.`n" +
-          "          To keep using PlugY, roll back to Season 13 (see README).")
-}
 
 $origHandler = $t.Handler
 Ok ("panel hook entry  0x{0:X6}  handler 0x{1:X8}" -f $t.Entry, $origHandler)
