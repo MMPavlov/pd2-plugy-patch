@@ -1,10 +1,12 @@
 <#
-    Patch-PD2-PlugY.ps1   v4.0.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v5.0.0   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
     PlugY, while keeping PlugY's multi-page / shared stash working - and draws
     PlugY's stash page buttons on top of PD2's panel frame so they're visible.
+    On Season 14 the buttons only show and click on PD2's "Stash" category, not
+    on Gems, Runes and the other categories down the left of the stash.
 
     Nothing is hardcoded to a particular ProjectDiablo.dll build. Every address is
     located by byte signature at run time, so this keeps working across PD2 updates.
@@ -29,7 +31,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "4.0.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "5.0.0"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -259,6 +261,20 @@ function Test-HidesMouse([byte[]]$a, $pe, [int64]$va) {
     }
     $a[$o] -eq 0xFF -and $a[$o + 1] -eq 0xB6
 }
+# Season 14: D2Client's stash mouse-down handler calls a hit test here, right before
+# the call PlugY takes over to check its stash page buttons. This version hooks it, in
+# the hook-table slot after the panel record, so PlugY's buttons can't be clicked on
+# PD2's other stash categories (Gems, Runes, ...).
+$CLICK_CALL = 0x9B887
+# ...and D2Client's stash draw calls its item draw here, right before the call PlugY
+# takes over to draw the buttons. Hooked in the slot after that, so PlugY doesn't draw
+# them under PD2's frame on the other categories either (they show above its top edge).
+$DRAW_CALL = 0x99A4A
+# is hook-table slot (kept hooks + $n) the gate record for the D2Client call at $call?
+function Test-Gate([byte[]]$a, $tt, [int]$n, [int64]$call) {
+    $r = $tt.TableOff + ((Get-Keep $a $tt) + $n) * 20
+    (U32 $a $r) -eq 0 -and (U32 $a ($r + 4)) -eq ($call + 1) -and (U32 $a ($r + 12)) -eq 1
+}
 function Test-HookSet([byte[]]$a, $tt) {
     if ($tt.PD2PanelIndex -lt $S13_PANEL) { return $false }
     for ($i = 0; $i -lt $S13_PANEL; $i++) {
@@ -335,11 +351,13 @@ if ($t.Patched) {
     $ho = RvaToOff $pe ($t.Handler - $pe.ImageBase)
     $isV3 = ($ho -ge 0)
     if ($isV3) { for ($i = 0; $i -lt $V3_HEAD.Length; $i++) { if ($b[$ho + $i] -ne $V3_HEAD[$i]) { $isV3 = $false; break } } }
-    # current: this code in the panel slot for this season, hiding the mouse from D2's
-    # panel draw on Season 14 only. Versions before 4.0.0 left the Season 14 panel hook
-    # at entry 35 (and 3.x read the wrong module table there) - upgrade those.
-    if ($isV3 -and $t.PanelIndex -eq (Get-Keep $b $t) -and
-        (Test-HidesMouse $b $pe $t.Handler) -eq (Get-Season14 $b $t)) {
+    # current: this code in the panel slot for this season; on Season 14 only, hiding
+    # the mouse from D2's panel draw and gating the stash clicks and PlugY's own button
+    # draw. Versions before 4.0.0 left the Season 14 panel hook at entry 35 (and 3.x
+    # read the wrong module table there), 4.0.0 had no gates - upgrade those.
+    $s14 = Get-Season14 $b $t
+    if ($isV3 -and $t.PanelIndex -eq (Get-Keep $b $t) -and (Test-HidesMouse $b $pe $t.Handler) -eq $s14 -and
+        (Test-Gate $b $t 1 $CLICK_CALL) -eq $s14 -and (Test-Gate $b $t 2 $DRAW_CALL) -eq $s14) {
         Write-Host ""
         Write-Host "  ============================================" -ForegroundColor Green
         Write-Host "   ALREADY PATCHED - nothing to do" -ForegroundColor Green
@@ -418,6 +436,59 @@ if ($hideMouse) {
     Ok ("mouse position    D2Client+0x{0:X} / +0x{1:X}" -f $mouseX, $mouseY)
 }
 
+# 8. Season 14 only: PD2's own "stash open on the Stash category" check
+#      push 19h / call GetUIState / test eax,eax / setne cl / call IsStashTab / ...
+#    IsStashTab is "cmp dword [tab],9 / setbe al / ret": PD2's stash tabs 0-9 are its
+#    pages, 10 and up the categories down the left (Uniques, Sets, Gems, Runes, ...).
+#    PlugY's stash page buttons are drawn and clicked only while it's true.
+$gateStash = Get-Season14 $b $t
+if ($gateStash) {
+    $cat = FindSig $b @(0x6A,0x19, 0xE8,-1,-1,-1,-1, 0x85,0xC0, 0x0F,0x95,0xC1, 0xE8,-1,-1,-1,-1,
+                        0x84,0xC0, 0x74,-1, 0x84,0xC9, 0x74,-1, 0xB0,0x01, 0xC3)
+    $isStashVa = if ($cat -ge 0) { (OffToVa $pe ($cat + 12)) + 5 + [BitConverter]::ToInt32($b, $cat + 13) } else { -1 }
+    $io = if ($isStashVa -ge 0) { RvaToOff $pe ($isStashVa - $pe.ImageBase) } else { -1 }
+    if ($io -lt 0 -or $b[$io] -ne 0x83 -or $b[$io + 1] -ne 0x3D -or $b[$io + 6] -ne 0x09 -or
+        $b[$io + 7] -ne 0x0F -or $b[$io + 8] -ne 0x96 -or $b[$io + 9] -ne 0xC0 -or $b[$io + 10] -ne 0xC3) {
+        Fail "signature 5 (PD2's stash category check) not found in ProjectDiablo.dll."
+    }
+    Ok ("stash category    0x{0:X8} (PD2's Stash-tab check)" -f $isStashVa)
+
+    # 9. ...and the stash's mouse-down handler in D2Client, around PlugY's button check:
+    #      mov eax,ebx / call <hit test> / test eax,eax / je +13h / ...
+    #      mov edi,ebx / call <hit test PlugY takes over> / test eax,eax
+    $BTN_DOWN_CALL = 0x9B8A5
+    $co = RvaToOff $dpe ($CLICK_CALL - 2); $bo = RvaToOff $dpe ($BTN_DOWN_CALL - 2)
+    if ($co -lt 0 -or $bo -lt 0 -or $dc[$co] -ne 0x8B -or $dc[$co + 1] -ne 0xC3 -or $dc[$co + 7] -ne 0x85 -or
+        $dc[$co + 8] -ne 0xC0 -or $dc[$co + 9] -ne 0x74 -or $dc[$co + 10] -ne ($BTN_DOWN_CALL - 2 - ($CLICK_CALL + 9)) -or
+        $dc[$bo] -ne 0x8B -or $dc[$bo + 1] -ne 0xFB -or $dc[$bo + 7] -ne 0x85 -or $dc[$bo + 8] -ne 0xC0) {
+        Fail "D2Client's stash click handler isn't as expected - D2Client.dll isn't the 1.13c build PlugY expects."
+    }
+    $clickHit = DcCallTarget $CLICK_CALL "stash click"
+    $btnHit   = DcCallTarget $BTN_DOWN_CALL "stash button click"
+    Ok ("stash click call  0x{0:X} (PlugY's button check at 0x{1:X})" -f $CLICK_CALL, $BTN_DOWN_CALL)
+
+    # 10. ...and the stash draw, around the call PlugY takes over to draw its buttons:
+    #      push eax / mov byte [flag],4 / call <item draw> / mov [flag],bl / call <buttons>
+    $do = RvaToOff $dpe ($DRAW_CALL - 8)
+    if ($do -lt 0 -or $dc[$do] -ne 0x50 -or $dc[$do + 1] -ne 0xC6 -or $dc[$do + 2] -ne 0x05 -or $dc[$do + 7] -ne 0x04 -or
+        $dc[$do + 13] -ne 0x88 -or $dc[$do + 14] -ne 0x1D -or (U32 $dc ($do + 15)) -ne (U32 $dc ($do + 3)) -or
+        $DRAW_CALL + 11 -ne $BTN_CALL) {
+        Fail "D2Client's stash draw isn't as expected - D2Client.dll isn't the 1.13c build PlugY expects."
+    }
+    $itemDraw = DcCallTarget $DRAW_CALL "stash item draw"
+    $drawFlag = [int64](U32 $dc ($do + 3)) - $dpe.ImageBase
+    Ok ("stash draw call   0x{0:X} (PlugY's buttons at 0x{1:X})" -f $DRAW_CALL, $BTN_CALL)
+
+    # their records go in the two slots after the panel record, which must hold pointers
+    # (relative-call hooks) in PD2's table, so Windows relocates the new ones with the DLL
+    foreach ($n in 1, 2) {
+        $gs = $t.TableOff + ((Get-Keep $b $t) + $n) * 20
+        if ((RvaToOff $pe ([int64](U32 $b ($gs + 8)) - $pe.ImageBase)) -lt 0 -or (U32 $b ($gs + 12)) -ne 1 -or (U32 $b ($gs + 16)) -ne 0) {
+            Fail "hook-table entry $((Get-Keep $b $t) + $n) isn't a call hook in this build - the stash gates can't go there."
+        }
+    }
+}
+
 # ------------------------------------------------------------- the code ----
 #
 # The panel hook entry is redirected here. Runs, in order:
@@ -427,6 +498,12 @@ if ($hideMouse) {
 #      land on top of PD2's frame
 # On Season 14, step 1 runs with D2's mouse position moved off-screen (and put back
 # right after), so D2 draws no tooltip of its own; PD2's renderer draws the real one.
+# Step 3 also needs PD2's Stash category, and a second routine (the click gate) takes
+# the hit-test call before PlugY's button check in D2's stash mouse-down handler: on
+# the other categories it makes that call itself and carries on after PlugY's check,
+# exactly as D2 would without PlugY. Clicks on items and the inventory still work.
+# A third (the draw gate) does the same for the item-draw call before PlugY's button
+# draw in step 1, so on those categories PlugY draws nothing under PD2's frame either.
 # Position-independent: PD2's module table is addressed relative to this code
 # (call $+5 / pop), D2Client through its runtime base, so it survives relocation.
 
@@ -457,14 +534,75 @@ if ($hideMouse) {
 $prog += @(
     @{ B = @(0xE8,0,0,0,0); To = $origHandler }                         # call PD2 renderer
     @{ B = @(0x83,0xBE) + [BitConverter]::GetBytes([uint32]$uiStashRva) + @(0x00) }  # cmp dword [esi+stash],0
+)
+if ($gateStash) {
+    $prog += @(
+        @{ B = @(0x0F,0x84,0,0,0,0); ToLabel = "done" }                 # jz done
+        @{ B = @(0xE8,0,0,0,0); To = $isStashVa }                       # call PD2's IsStashTab
+        @{ B = @(0x84,0xC0) }                                           # test al,al
+    )
+}
+$prog += @(
     @{ B = @(0x0F,0x85,0,0,0,0); ToLabel = "buttons" }                  # jnz buttons
-    @{ B = @(0x5E) }                                                    # pop esi
+    @{ B = @(0x5E); Label = "done" }                                    # pop esi
     @{ B = @(0xC3); End = $true }                                       # ret
     @{ B = @(0x8B,0x86) + [BitConverter]::GetBytes([uint32]($BTN_CALL + 1)); Label = "buttons" }   # mov eax,[esi + call operand]
     @{ B = @(0x8D,0x84,0x06) + [BitConverter]::GetBytes([uint32]($BTN_CALL + 5)) }               # lea eax,[esi + eax + next]
     @{ B = @(0x5E) }                                                    # pop esi
     @{ B = @(0xFF,0xE0); End = $true }                                  # jmp eax (PlugY's routine)
 )
+# The click gate, called instead of D2's hit test (eax = y, esi = x, ebx = y). Its
+# return address is the "test eax,eax" after that call; on a category other than
+# Stash it returns past PlugY's call instead, with what D2's own target returns.
+if ($gateStash) {
+    $prog += @(
+        @{ B = @(0xE8,0,0,0,0, 0x59); Pic = $true; Label = "click" }    # call $+5 / pop ecx
+        @{ B = @(0x8B,0x89,0,0,0,0); PicDisp = $true }                  # mov ecx,[ecx + (modtbl - here)]
+        @{ B = @(0x81,0xC1) + (LE $clickHit) }                          # add ecx, <D2's hit test>
+        @{ B = @(0xFF,0xD1) }                                           # call ecx
+        @{ B = @(0x85,0xC0) }                                           # test eax,eax
+        @{ B = @(0x0F,0x85,0,0,0,0); ToLabel = "clickret" }             # jnz clickret (D2 takes the click)
+        @{ B = @(0xE8,0,0,0,0); To = $isStashVa }                       # call PD2's IsStashTab
+        @{ B = @(0x84,0xC0) }                                           # test al,al
+        @{ B = @(0x0F,0x84,0,0,0,0); ToLabel = "noplugy" }              # jz noplugy
+        @{ B = @(0x33,0xC0) }                                           # xor eax,eax (on to PlugY's check)
+        @{ B = @(0xC3); End = $true; Label = "clickret" }               # ret
+        @{ B = @(0x8B,0xFB); Label = "noplugy" }                        # mov edi,ebx (as D2 does next)
+        @{ B = @(0xE8,0,0,0,0, 0x59); Pic = $true }                     # call $+5 / pop ecx
+        @{ B = @(0x8B,0x89,0,0,0,0); PicDisp = $true }                  # mov ecx,[ecx + (modtbl - here)]
+        @{ B = @(0x81,0xC1) + (LE $btnHit) }                            # add ecx, <D2's target of PlugY's call>
+        @{ B = @(0xFF,0xD1) }                                           # call ecx
+        @{ B = @(0x83,0x04,0x24, ($BTN_DOWN_CALL - $CLICK_CALL)) }      # add dword [esp], <past PlugY's call>
+        @{ B = @(0xC3); End = $true }                                   # ret
+    )
+}
+# The draw gate, called instead of D2's stash item draw (one argument, which it pops;
+# bl = the flag byte D2 puts back next). On the Stash category it just jumps there.
+# Otherwise it calls it, does what D2 does next except PlugY's call - puts the flag
+# back and calls D2's own target of that call - and returns past PlugY's call.
+if ($gateStash) {
+    $prog += @(
+        @{ B = @(0xE8,0,0,0,0, 0x59); Pic = $true; Label = "draw" }     # call $+5 / pop ecx
+        @{ B = @(0x8B,0x89,0,0,0,0); PicDisp = $true }                  # mov ecx,[ecx + (modtbl - here)]
+        @{ B = @(0x50) }                                                # push eax
+        @{ B = @(0xE8,0,0,0,0); To = $isStashVa }                       # call PD2's IsStashTab
+        @{ B = @(0x84,0xC0) }                                           # test al,al
+        @{ B = @(0x58) }                                                # pop eax
+        @{ B = @(0x0F,0x84,0,0,0,0); ToLabel = "nobuttons" }            # jz nobuttons
+        @{ B = @(0x81,0xC1) + (LE $itemDraw) }                          # add ecx, <D2's item draw>
+        @{ B = @(0xFF,0xE1); End = $true }                              # jmp ecx (then on to PlugY's call, as before)
+        @{ B = @(0x51); Label = "nobuttons" }                           # push ecx (D2Client base)
+        @{ B = @(0xFF,0x74,0x24,0x08) }                                 # push dword [esp+8] (the argument again)
+        @{ B = @(0x8D,0x91) + (LE $itemDraw) }                          # lea edx,[ecx + <D2's item draw>]
+        @{ B = @(0xFF,0xD2) }                                           # call edx
+        @{ B = @(0x59) }                                                # pop ecx
+        @{ B = @(0x88,0x99) + (LE $drawFlag) }                          # mov [ecx + flag],bl (as D2 does next)
+        @{ B = @(0x81,0xC1) + (LE $btnTarget) }                         # add ecx, <D2's target of PlugY's call>
+        @{ B = @(0xFF,0xD1) }                                           # call ecx
+        @{ B = @(0x83,0x04,0x24, ($BTN_CALL + 5 - ($DRAW_CALL + 5))) }  # add dword [esp], <past PlugY's call>
+        @{ B = @(0xC2,0x04,0x00); End = $true }                         # ret 4
+    )
+}
 
 # code caves: runs of int3 padding inside the mapped part of .text
 $text = $pe.Sections | Where-Object { $_.Name -eq ".text" }
@@ -476,7 +614,7 @@ $endRaw = $text.RawPtr + [Math]::Min($text.RawSize, $text.VSize)
 for ($i = $text.RawPtr; $i -lt $endRaw; $i++) {
     if ($b[$i] -eq 0xCC) { if ($run -eq 0) { $start = $i }; $run++ }
     else {
-        if ($run -ge $MIN_CAVE) { [void]$caves.Add(@{ Off = $start; Len = $run }); if ($caves.Count -ge 24) { break } }
+        if ($run -ge $MIN_CAVE) { [void]$caves.Add(@{ Off = $start; Len = $run }); if ($caves.Count -ge 64) { break } }
         $run = 0
     }
 }
@@ -552,9 +690,19 @@ if ($t.PanelIndex -ne $keep) {
     Ok ("panel hook moved from entry {0} to {1} (entry 13 and the {2} new hooks stay off)" -f $t.PanelIndex, $keep, ($t.PanelIndex - $S13_PANEL))
 }
 Ok ("panel handler 0x{0:X8} -> 0x{1:X8}" -f $origHandler, $codeVa)
-Emit ($panelSlot + 20) ([BitConverter]::GetBytes([uint32]0x1B))
+$endSlot = $panelSlot + 20
+if ($gateStash) {
+    # the two gates as more records, in slots that held pointers too (so they're relocated)
+    foreach ($g in @(@("click", $CLICK_CALL, "stash clicks    "), @("draw", $DRAW_CALL, "stash buttons   "))) {
+        $gva = VaOf $labels[$g[0]]
+        Emit $endSlot ([byte[]]((LE 0) + (LE ($g[1] + 1)) + (LE $gva) + (LE 1) + (LE 0)))
+        Ok ("{0}  D2Client+0x{1:X} -> 0x{2:X8} (PlugY's buttons on the Stash category only)" -f $g[2], $g[1], $gva)
+        $endSlot += 20
+    }
+}
+Emit $endSlot ([BitConverter]::GetBytes([uint32]0x1B))
 if ($keep -eq $S13_PANEL) { Ok ("hook table ends after entry {0} - the {1} hooks tested on Season 13" -f $keep, ($keep + 1)) }
-else { Ok ("hook table ends after entry {0} - Season 13's hooks, minus the call PlugY hooks (0x4437C)" -f $keep) }
+else { Ok ("hook table ends after entry {0} - Season 13's hooks minus the call PlugY hooks (0x4437C), then the stash gates" -f ($keep + 2)) }
 
 [System.IO.File]::WriteAllBytes($dll, $b)
 
@@ -586,6 +734,7 @@ Write-Host "  PlugY.ini Param= must include  -plugy   (testing mode: Launch-PD2-
 Write-Host ""
 Write-Host "  Hover an item - you should see green [min - max] ranges, Max Sockets"
 Write-Host "  and the upgrade recipe. PlugY's stash page buttons now draw on top."
+if ($gateStash) { Write-Host "  (Only on PD2's Stash category - not on Gems, Runes and the others.)" }
 Write-Host ""
 Write-Host "  Re-run this after every PD2 update (the launcher restores the DLL)."
 Write-Host ""

@@ -6,6 +6,56 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 5.0.0 — 2026-10-27
+
+Major version: what's written into `ProjectDiablo.dll` on Season 14 changed. Season 13
+output is byte-identical to 3.1.0–4.0.0.
+
+### Added
+- **Season 14: PlugY's stash page buttons only on PD2's "Stash" category.** PD2's
+  Season 14 stash has categories down the left (Stash, Gems, Runes, Misc, Maps, Ubers,
+  Uniques, Sets). On the others PD2 shows its own storage, but PlugY's buttons stayed
+  on top, and clicking them still turned PlugY's pages behind it. Now they're neither
+  drawn nor clickable there.
+  - Drawing: before redrawing PlugY's buttons, the panel code calls PD2's own check
+    for the Stash category (PD2's stash tab 0–9 are its pages, 10 and up the
+    categories), found by signature.
+  - PlugY's own draw: one more hook, on the call D2's stash draw makes right before
+    the one PlugY took over to draw its buttons (`D2Client+0x99A4A`, D2's item draw).
+    On any category but Stash it makes that call, then D2's own call that PlugY took
+    over, and returns past PlugY's. Without it, PlugY's buttons, drawn under PD2's
+    frame, still showed above its top edge on the categories.
+  - Clicks: one more hook, on the hit test that D2's stash mouse-down handler calls
+    right before PlugY's button check (`D2Client+0x9B887`). On any category but Stash
+    it makes that call, then D2's own call that PlugY took over, and returns past
+    PlugY's check: what D2 does without PlugY. Item clicks in the stash and inventory
+    still work. PlugY's mouse-up only acts after its own mouse-down, so it isn't hooked.
+- A Season 14 DLL patched by 4.0.0 (or by the first 5.0.0 test build, which had no
+  draw hook) is upgraded automatically from the backup.
+
+### Changed
+- The code-cave search now collects up to 64 gaps (was 24); the Season 14 code now
+  needs 35. Season 13 still uses the same first gaps.
+- Launcher reports 5.0.0 too (no functional change).
+
+### Checked
+- 77 offline checks: fresh patch, re-run, restore, and upgrades from 2.2.0, 3.1.0, 4.0.0,
+  the pre-release 4.0.0 builds and the first 5.0.0 test build, on Season 13 (`579987ED`,
+  `538A77B7`) and Season 14 (open beta, launch, hotfix). Also checked: refusing a
+  simulated future season, a Season 14 build without PD2's category check, a D2Client
+  whose stash draw differs, and a backup from another season. An independent
+  disassembler check confirms the hooks and code on each build, and that the tab
+  variable is the one PD2 highlights its Stash category from.
+- The injected code was run in a CPU emulator on every build, at its usual address and
+  relocated. Buttons are redrawn only with the stash open on tabs 0–9. On a category,
+  clicks skip PlugY and return what D2 alone would. D2's own stash-draw instructions,
+  run with the draw hook in place, reach PlugY's button draw only on tabs 0–9 and
+  otherwise end exactly as D2's would. Registers and stack are preserved.
+- In game, the first 5.0.0 test build (clicks and the redraw only) still showed the top
+  of PlugY's buttons above PD2's frame on Gems; the draw hook is the fix for that.
+- **Tested in game** on the Season 14 hotfix: no PlugY buttons on Gems, Runes and the
+  other categories, and they still show and work on the Stash category.
+
 ## 4.0.0 — 2026-10-27
 
 Major version: what's written into `ProjectDiablo.dll` on Season 14 changed. Season 13

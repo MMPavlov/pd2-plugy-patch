@@ -45,6 +45,10 @@ stat ranges show, PlugY's stash pages go both ways, and only PD2's tooltip is dr
 PD2's own new Season 14 stash (its tabs, the cube on the stash page, search) is drawn
 too, but hasn't been tested alongside PlugY — use PlugY's page buttons.
 
+From 5.0.0, PlugY's page buttons show only on PD2's **Stash** category (the first one
+down the left of the stash). On Gems, Runes and the other categories they're hidden and
+can't be clicked, so PlugY's pages no longer turn behind PD2's storage.
+
 ### Season 14: PlugY with stat ranges
 
 1. **Diablo II: Lord of Destruction + Project Diablo 2**, updated to Season 14 by the
@@ -280,7 +284,8 @@ All three come from the same cause: PD2 and PlugY each want to draw the
 inventory/stash panel, so the patch runs both renderers — PlugY's first, PD2's on top.
 
 *Fixed in 3.0.0:* PlugY's stash page buttons used to be hidden under PD2's top
-border. They're now redrawn on top of PD2's frame whenever the stash is open.
+border. They're now redrawn on top of PD2's frame whenever the stash is open (on
+Season 14, from 5.0.0, only on PD2's Stash category).
 
 ## Undo
 
@@ -320,14 +325,45 @@ The patch:
    pop  [esi + MouseY] / pop [esi + MouseX]    ; (Season 14 only)
    call <PD2 renderer>         ;   2. PD2's renderer (BH augmentation, PD2's frame)
    cmp  dword [esi + uiState+0x19*4], 0   ; stash open?
+   jz   done                   ; Season 14 only: ...and on PD2's Stash category?
+   call <PD2 IsStashTab>       ;   (PD2's "cmp dword [tab], 9 / setbe al / ret")
+   test al, al                 ;
    jnz  buttons
-   pop  esi / ret
+   done: pop esi / ret
    buttons:                    ;   3. PlugY's stash-button routine again, on top
    mov  eax, [esi + 0x99A56]   ;      (the call PlugY redirected - read at run time)
    lea  eax, [esi + eax + 0x99A5A]
    pop  esi / jmp eax
    ```
-   Nothing in it is an absolute address, so it still works if Windows loads
+   On Season 14 a second routine, the **click gate**, takes over the hit test that
+   D2Client's stash mouse-down handler calls just before PlugY's button check:
+   ```asm
+   ; D2Client+0x9B885:  mov eax,ebx / call <hit test>   <- now calls the gate
+   ;                    test eax,eax / je ... / mov edi,ebx / call <PlugY's check> / test eax,eax
+   call <D2's hit test>        ; as before (D2Client base via the module table)
+   test eax, eax / jnz ret     ; D2 takes this click itself
+   call <PD2 IsStashTab> / test al, al / jz noplugy
+   xor  eax, eax / ret         ; Stash category: on to PlugY's check, as before
+   noplugy:
+   mov  edi, ebx               ; what D2 does next...
+   call <D2's own target of the call PlugY took over>
+   add  dword [esp], 1Eh / ret ; ...and carry on after that call, skipping PlugY's check
+   ```
+   A third, the **draw gate**, does the same for PlugY's own button draw inside step 1
+   (drawn under PD2's frame, its top still showed above it on the categories). It
+   takes over D2's item-draw call that comes just before the call PlugY took over:
+   ```asm
+   ; D2Client+0x99A42:  push eax / mov byte [flag],4 / call <item draw>   <- now calls the gate
+   ;                    mov [flag],bl / call <PlugY's buttons> / ...
+   call <PD2 IsStashTab> / test al, al / jz nobuttons   ; (eax kept around it)
+   jmp  <D2's item draw>       ; Stash category: as before, then PlugY's buttons
+   nobuttons:
+   call <D2's item draw>       ; with the same argument
+   mov  [flag], bl             ; what D2 does next...
+   call <D2's own target of the call PlugY took over>
+   add  dword [esp], 0Bh / ret 4   ; ...and carry on after that call, skipping PlugY's
+   ```
+   Nothing in any of them is an absolute address, so they still work if Windows loads
    ProjectDiablo.dll or D2Client.dll somewhere other than their usual address.
 3. **Redirect and cut the table** — only hooks tested alongside PlugY stay:
    - **Season 13** (35 entries): entries 0–13 stay, entry 14 (the panel hook) now
@@ -335,10 +371,11 @@ The patch:
      owns the panel and would conflict.
    - **Season 14** (65 entries): entries 0–13 are the same as Season 13's, then 21 new
      hooks (PD2's rewrite of the party portraits), then the panel hook at entry 35.
-     The panel record is moved up to entry 13 and the table ends after it. Entry 13
-     is left out because PlugY hooks the same call (`D2Client+0x4437C`): on Season 14
-     PD2 installs after PlugY, and its Season 14 version of that hook made every
-     stash page button go to the next page.
+     The panel record is moved up to entry 13, the click and draw gates go in entries
+     14 and 15 (relative-call records on `D2Client+0x9B888` and `+0x99A4B`, like PD2's
+     own), and the table ends after them. Entry 13 is left out because PlugY hooks
+     the same call (`D2Client+0x4437C`): on Season 14 PD2 installs after PlugY, and its
+     Season 14 version of that hook made every stash page button go to the next page.
 
 Everything is located by signature at run time:
 
@@ -353,6 +390,9 @@ Everything is located by signature at run time:
 | stash-button call | `call` at `D2Client.dll` RVA `0x99A55` (the one PlugY hooks), checked |
 | stash-open flag | D2Client's `GetUIState` (`83 F8 26 … 8B 04 85 ???????? C3`), UI index `0x19` |
 | mouse position | the `mov eax,[MouseX]` / `mov ecx,[MouseY]` at the start of the panel draw (Season 14) |
+| Stash-category check | PD2's `push 19h / call GetUIState / … / call IsStashTab / …`, its callee checked to be `cmp dword [tab], 9 / setbe al / ret` (Season 14) |
+| stash click site | `mov eax,ebx / call` at `D2Client.dll` RVA `0x9B885`, then `je` to `mov edi,ebx / call` at `0x9B8A3` (PlugY's mouse-down check), checked (Season 14) |
+| stash draw site | `push eax / mov byte [flag],4 / call / mov [flag],bl` at `D2Client.dll` RVA `0x99A42`, right before the stash-button call, checked (Season 14) |
 | code caves | runs of `0xCC` at least as long as the longest instruction + a 5-byte jump, in the mapped part of `.text` |
 
 Running it on a DLL patched by an older version upgrades it automatically, starting
