@@ -1,5 +1,5 @@
 <#
-    Patch-PD2-PlugY.ps1   v3.2.1   (version-independent)
+    Patch-PD2-PlugY.ps1   v4.0.0   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
@@ -9,8 +9,9 @@
     Nothing is hardcoded to a particular ProjectDiablo.dll build. Every address is
     located by byte signature at run time, so this keeps working across PD2 updates.
     If PD2 ever restructures the code so a signature no longer matches, the script
-    stops and tells you which one - it never writes a partial patch. It also stops
-    if PD2's hook table is laid out differently from the tested builds (Season 14).
+    stops and tells you which one - it never writes a partial patch. It installs
+    only PD2 hooks tested alongside PlugY (Seasons 13 and 14 so far), and stops if
+    a build's first hooks aren't those.
 
     SINGLE PLAYER ONLY. Do not use on the PD2 online realm.
 
@@ -28,7 +29,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "3.2.1"   # bump on every change - see CHANGELOG.md
+$VERSION = "4.0.0"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -173,9 +174,10 @@ function FindSig([byte[]]$a, [int[]]$sig, [int]$from = 0) {
 
 # Locates everything that gets patched in a ProjectDiablo.dll image.
 # -Soft: return $null instead of stopping when something isn't found.
+$panelSig = @(0x00,0x00,0x00,0x00, 0x18,0x3B,0x0C,0x00, -1,-1,-1,0x10, 0x01,0x00,0x00,0x00)
 function Find-Targets([byte[]]$a, [string]$label, $pe, [switch]$Soft) {
     # 2. the panel hook entry: { module=0, RVA=0x000C3B18, handler, flag=1 }
-    $entry = FindSig $a @(0x00,0x00,0x00,0x00, 0x18,0x3B,0x0C,0x00, -1,-1,-1,0x10, 0x01,0x00,0x00,0x00)
+    $entry = FindSig $a $panelSig
     if ($entry -lt 0) { if ($Soft) { return $null }; Fail "signature 2 (the D2Client panel hook entry) not found in $label." }
 
     # 1. the -plugy gate:  cmp byte [flag],0 / jne short / mov ecx,<table> / call <installer>
@@ -195,16 +197,30 @@ function Find-Targets([byte[]]$a, [string]$label, $pe, [switch]$Soft) {
     if ($gate -lt 0) { if ($Soft) { return $null }; Fail "signature 1 (the -plugy gate) not found in $label - PD2 changed too much, the patch needs re-deriving." }
     $jne = $gate + 7
 
-    # 3. PD2's module base table:  mov eax,[<table> + eax*8]  (slot 0 = D2Client)
-    $mt = FindSig $a @(0x8B,0x04,0xC5,-1,-1,-1,0x10)
-    if ($mt -lt 0) { if ($Soft) { return $null }; Fail "signature 3 (module base table) not found in $label." }
+    # 3. PD2's module base table:  mov eax,[<table> + eax*8]  (slot 0 = D2Client), read
+    #    inside the hook installer the gate calls. Season 14 has other matches earlier
+    #    in the file that point somewhere else.
+    $instOff = RvaToOff $pe ((OffToVa $pe ($gate + 14)) + 5 + [BitConverter]::ToInt32($a, $gate + 15) - $pe.ImageBase)
+    $mt = if ($instOff -ge 0) { FindSig $a @(0x8B,0x04,0xC5,-1,-1,-1,0x10) $instOff } else { -1 }
+    if ($mt -lt 0 -or $mt -gt $instOff + 0x100) { if ($Soft) { return $null }; Fail "signature 3 (module base table) not found in the hook installer of $label." }
+
+    # PD2's own panel record. Once patched on Season 14 the first panel record is the
+    # one this script moved up; PD2's original stays further down, unused.
+    $last = $entry
+    $at = FindSig $a $panelSig ($entry + 1)
+    while ($at -ge 0 -and $at -lt $tableOff + 256 * 20) {
+        if (($at - $tableOff) % 20 -eq 0) { $last = $at }
+        $at = FindSig $a $panelSig ($at + 1)
+    }
 
     [PSCustomObject]@{
         Gate       = $gate
         Jne        = $jne
         Patched    = ($a[$jne] -eq 0x90 -and $a[$jne + 1] -eq 0x90)
+        TableOff   = $tableOff
         Entry      = $entry
         PanelIndex = ($entry - $tableOff) / 20
+        PD2PanelIndex = ($last - $tableOff) / 20
         Handler    = [int64](U32 $a ($entry + 8))
         ModTbl     = [int64](U32 $a ($mt + 3))
     }
@@ -213,6 +229,46 @@ function Find-Targets([byte[]]$a, [string]$label, $pe, [switch]$Soft) {
 # signature of the start of the code this version writes:
 #   push esi / call $+5 / pop eax
 $V3_HEAD = [byte[]](0x56, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x58)
+
+# Which PD2 hooks this installs. Season 13: PD2's first 14 hook-table entries, then
+# the panel hook as entry 14, then the end of the table - the set tested with PlugY.
+# Season 14 has the same first 14, then 21 new ones (a rewrite of the party portraits
+# down the left of the screen), then the panel hook at entry 35. There the panel record
+# is moved up and the table ends after it - and entry 13 is left out too: it hooks the
+# same D2Client call as PlugY (0x4437C, PlugY's /players default), and on Season 14
+# PD2 installs after PlugY and wraps that call with its new stash, which turned every
+# stash page button into "next page".
+$TESTED_HOOKS = @(        # { module, offset, relative, size } of entries 0-13
+    @(3,0x02E47F,1,0), @(3,0x053BA4,1,0), @(3,0x0543B3,1,0), @(3,0x02D568,1,0), @(3,0x0543E7,1,0),
+    @(3,0x02D8E1,1,0), @(3,0x02DD0B,1,0), @(3,0x02DEA8,1,0), @(0,0x043979,1,0), @(0,0x0AD484,1,0),
+    @(0,0x04449F,1,0), @(7,0x0066C0,0,1), @(7,0x006917,0,1), @(0,0x04437C,1,0))
+$S13_PANEL = $TESTED_HOOKS.Count                     # where Season 13 has the panel hook
+function Get-Season14([byte[]]$a, $tt) { $tt.PD2PanelIndex -gt $S13_PANEL }
+# number of PD2's leading hooks kept = the slot the panel record goes in
+function Get-Keep([byte[]]$a, $tt) { if (Get-Season14 $a $tt) { $S13_PANEL - 1 } else { $S13_PANEL } }
+# Does the panel code at $va hide D2's mouse position from D2's own panel draw (what
+# this version writes on Season 14)? Its 4th instruction, after push esi / call+pop /
+# mov esi, is then "push dword [esi+MouseX]" (FF B6); link jumps between caves followed.
+function Test-HidesMouse([byte[]]$a, $pe, [int64]$va) {
+    $o = RvaToOff $pe ($va - $pe.ImageBase)
+    foreach ($len in 1, 6, 6, 0) {
+        if ($o -lt 0) { return $false }
+        if ($a[$o] -eq 0xE9) { $o = RvaToOff $pe ((OffToVa $pe $o) + 5 + [BitConverter]::ToInt32($a, $o + 1) - $pe.ImageBase) }
+        if ($o -lt 0) { return $false }
+        $o += $len
+    }
+    $a[$o] -eq 0xFF -and $a[$o + 1] -eq 0xB6
+}
+function Test-HookSet([byte[]]$a, $tt) {
+    if ($tt.PD2PanelIndex -lt $S13_PANEL) { return $false }
+    for ($i = 0; $i -lt $S13_PANEL; $i++) {
+        $r = $tt.TableOff + $i * 20; $h = $TESTED_HOOKS[$i]
+        # on a patched Season 14 DLL the last slot holds the moved panel record
+        if ($i -eq $S13_PANEL - 1 -and $tt.Patched -and $tt.PanelIndex -eq $i) { continue }
+        if ((U32 $a $r) -ne $h[0] -or (U32 $a ($r + 4)) -ne $h[1] -or (U32 $a ($r + 12)) -ne $h[2] -or (U32 $a ($r + 16)) -ne $h[3]) { return $false }
+    }
+    $true
+}
 
 # ------------------------------------------------------------- restore ----
 
@@ -229,7 +285,7 @@ if ($Restore) {
     }
     $old = [System.IO.File]::ReadAllBytes($backup)
     $ot  = Find-Targets $old "ProjectDiablo.dll.stock-backup" (Get-PE $old "ProjectDiablo.dll.stock-backup") -Soft
-    if (-not $ot -or $ot.Patched -or $old.Length -ne $cur.Length -or $ot.Gate -ne $ct.Gate -or $ot.Entry -ne $ct.Entry) {
+    if (-not $ot -or $ot.Patched -or $old.Length -ne $cur.Length -or $ot.Gate -ne $ct.Gate -or $ot.TableOff -ne $ct.TableOff) {
         Fail ("ProjectDiablo.dll.stock-backup is from a different PD2 version than ProjectDiablo.dll,`n" +
               "          so putting it back would break the game. Get the original DLL back with the`n" +
               "          PD2 launcher instead (on the Season 13 rollback: extract the S13 zip again).")
@@ -253,30 +309,25 @@ Info "this takes a few seconds"
 $t = Find-Targets $b "ProjectDiablo.dll" $pe
 Ok ("-plugy gate       0x{0:X6}" -f $t.Gate)
 
-# The hook table must be laid out like the tested builds (Season 13): the panel hook
-# is entry 14, and the patch switches off everything after it. Season 14 puts 21 new
-# D2Client hooks in front of it, so cutting the table there would leave hooks running
-# that have never been tried alongside PlugY - all signatures still match, so stop here.
-# Checked before "already patched", because versions before 3.2.0 patched Season 14.
-$TESTED_PANEL_INDEX = 14
-if ($t.PanelIndex -ne $TESTED_PANEL_INDEX) {
-    $why = ("          Its hook table is laid out differently from Season 13 (panel hook is entry {0},`n" +
-            "          expected {1}) - Season 14 looks like this. The patch is untested on it.") -f $t.PanelIndex, $TESTED_PANEL_INDEX
+# Checked before "already patched", so a patch on a build this doesn't know is never
+# reported as fine.
+if (-not (Test-HookSet $b $t)) {
+    $why = "          Its first $S13_PANEL hooks aren't the ones this patch works with on Seasons 13 and 14."
     if ($t.Patched) {
         Write-Host ""
         Write-Host "  ==================================================" -ForegroundColor Yellow
-        Write-Host "   PATCHED BY AN OLDER VERSION - NOT SUPPORTED" -ForegroundColor Yellow
+        Write-Host "   PATCHED, BUT THIS PD2 VERSION ISN'T SUPPORTED" -ForegroundColor Yellow
         Write-Host "  ==================================================" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  ProjectDiablo.dll was patched by a version of this script before 3.2.0,"
-        Write-Host "  which didn't check the PD2 version. This PD2 version isn't supported:"
+        Write-Host "  ProjectDiablo.dll was patched by another version of this script."
         Write-Host $why
         Write-Host ""
         Write-Host "  To undo it, double-click Restore-Original.bat." -ForegroundColor Yellow
         Stop-Here 1
     }
     Fail ("this version of PD2 isn't supported yet.`n$why`n" +
-          "          For stat ranges with PlugY, roll back to Season 13 (see README).")
+          "          The patch needs updating for it. For stat ranges with PlugY meanwhile,`n" +
+          "          roll back to Season 13 (see README).")
 }
 
 $upgrading = $false
@@ -284,10 +335,14 @@ if ($t.Patched) {
     $ho = RvaToOff $pe ($t.Handler - $pe.ImageBase)
     $isV3 = ($ho -ge 0)
     if ($isV3) { for ($i = 0; $i -lt $V3_HEAD.Length; $i++) { if ($b[$ho + $i] -ne $V3_HEAD[$i]) { $isV3 = $false; break } } }
-    if ($isV3) {
+    # current: this code in the panel slot for this season, hiding the mouse from D2's
+    # panel draw on Season 14 only. Versions before 4.0.0 left the Season 14 panel hook
+    # at entry 35 (and 3.x read the wrong module table there) - upgrade those.
+    if ($isV3 -and $t.PanelIndex -eq (Get-Keep $b $t) -and
+        (Test-HidesMouse $b $pe $t.Handler) -eq (Get-Season14 $b $t)) {
         Write-Host ""
         Write-Host "  ============================================" -ForegroundColor Green
-        Write-Host "   ALREADY PATCHED (v3) - nothing to do" -ForegroundColor Green
+        Write-Host "   ALREADY PATCHED - nothing to do" -ForegroundColor Green
         Write-Host "  ============================================" -ForegroundColor Green
         Write-Host ""
         Write-Host "  If you still don't see stat ranges, make sure you start the game with" -ForegroundColor DarkGray
@@ -307,7 +362,7 @@ if ($t.Patched) {
     $bb  = [System.IO.File]::ReadAllBytes($backup)
     $bpe = Get-PE $bb "ProjectDiablo.dll.stock-backup"
     $bt  = Find-Targets $bb "ProjectDiablo.dll.stock-backup" $bpe
-    if ($bt.Patched -or $bb.Length -ne $b.Length -or $bt.Entry -ne $t.Entry -or $bt.Gate -ne $t.Gate) {
+    if ($bt.Patched -or $bb.Length -ne $b.Length -or $bt.TableOff -ne $t.TableOff -or $bt.Gate -ne $t.Gate) {
         Fail ("ProjectDiablo.dll.stock-backup doesn't match this DLL's build.`n" +
               "          Get the original DLL back (PD2 launcher > verify/repair files), then run this again.")
     }
@@ -318,7 +373,7 @@ if ($t.Patched) {
 if ($b[$t.Jne] -ne 0x75) { Fail ("unexpected byte 0x{0:X2} at the gate." -f $b[$t.Jne]) }
 
 $origHandler = $t.Handler
-Ok ("panel hook entry  0x{0:X6}  handler 0x{1:X8}" -f $t.Entry, $origHandler)
+Ok ("panel hook entry  0x{0:X6}  handler 0x{1:X8}  (entry {2})" -f $t.Entry, $origHandler, $t.PanelIndex)
 Ok ("module base table 0x{0:X8}" -f $t.ModTbl)
 
 # ------------------------------------------------------------- D2Client ----
@@ -349,6 +404,20 @@ $UI_STASH = 0x19                                         # D2 1.13c UI index of 
 $uiStashRva = ([int64](U32 $dc ($ui + 39)) - $dpe.ImageBase) + $UI_STASH * 4
 Ok ("stash-open flag   D2Client+0x{0:X}" -f $uiStashRva)
 
+# 7. Season 14 only: D2's mouse position, read by the panel draw right at its start
+#    (mov eax,[MouseX] / mov ecx,[MouseY]). Hidden from that draw so it doesn't print
+#    D2's plain tooltip next to PD2's - on Season 14 the two no longer line up.
+$hideMouse = Get-Season14 $b $t
+if ($hideMouse) {
+    $mo = RvaToOff $dpe ($panelRva + 0xF)
+    if ($mo -lt 0 -or $dc[$mo] -ne 0xA1 -or $dc[$mo + 5] -ne 0x8B -or $dc[$mo + 6] -ne 0x0D) {
+        Fail "D2Client's panel draw doesn't read the mouse position where expected - D2Client.dll isn't the 1.13c build PlugY expects."
+    }
+    $mouseX = [int64](U32 $dc ($mo + 1)) - $dpe.ImageBase
+    $mouseY = [int64](U32 $dc ($mo + 7)) - $dpe.ImageBase
+    Ok ("mouse position    D2Client+0x{0:X} / +0x{1:X}" -f $mouseX, $mouseY)
+}
+
 # ------------------------------------------------------------- the code ----
 #
 # The panel hook entry is redirected here. Runs, in order:
@@ -356,15 +425,36 @@ Ok ("stash-open flag   D2Client+0x{0:X}" -f $uiStashRva)
 #   2. PD2's renderer                -> BH stat-range augmentation, PD2's frame
 #   3. if the stash is open: PlugY's stash-button routine again, so the buttons
 #      land on top of PD2's frame
+# On Season 14, step 1 runs with D2's mouse position moved off-screen (and put back
+# right after), so D2 draws no tooltip of its own; PD2's renderer draws the real one.
 # Position-independent: PD2's module table is addressed relative to this code
 # (call $+5 / pop), D2Client through its runtime base, so it survives relocation.
 
+function LE([int64]$v) { [BitConverter]::GetBytes([uint32]$v) }
 $prog = @(
     @{ B = @(0x56) }                                                    # push esi
     @{ B = @(0xE8,0,0,0,0, 0x58); Pic = $true }                         # call $+5 / pop eax
     @{ B = @(0x8B,0xB0,0,0,0,0); PicDisp = $true }                      # mov esi,[eax + (modtbl - here)]
+)
+if ($hideMouse) {
+    $prog += @(
+        @{ B = @(0xFF,0xB6) + (LE $mouseX) }                            # push dword [esi + MouseX]
+        @{ B = @(0xFF,0xB6) + (LE $mouseY) }                            # push dword [esi + MouseY]
+        @{ B = @(0xC7,0x86) + (LE $mouseX) + (LE 0x7FFF) }              # mov dword [esi + MouseX], 7FFFh
+        @{ B = @(0xC7,0x86) + (LE $mouseY) + (LE 0x7FFF) }              # mov dword [esi + MouseY], 7FFFh
+    )
+}
+$prog += @(
     @{ B = @(0x8D,0x86) + [BitConverter]::GetBytes([uint32]$panelRva) } # lea eax,[esi + panelRva]
     @{ B = @(0xFF,0xD0) }                                               # call eax
+)
+if ($hideMouse) {
+    $prog += @(
+        @{ B = @(0x8F,0x86) + (LE $mouseY) }                            # pop dword [esi + MouseY]
+        @{ B = @(0x8F,0x86) + (LE $mouseX) }                            # pop dword [esi + MouseX]
+    )
+}
+$prog += @(
     @{ B = @(0xE8,0,0,0,0); To = $origHandler }                         # call PD2 renderer
     @{ B = @(0x83,0xBE) + [BitConverter]::GetBytes([uint32]$uiStashRva) + @(0x00) }  # cmp dword [esi+stash],0
     @{ B = @(0x0F,0x85,0,0,0,0); ToLabel = "buttons" }                  # jnz buttons
@@ -379,14 +469,14 @@ $prog = @(
 # code caves: runs of int3 padding inside the mapped part of .text
 $text = $pe.Sections | Where-Object { $_.Name -eq ".text" }
 if (-not $text) { Fail "no .text section in ProjectDiablo.dll." }
-$MIN_CAVE = 12          # longest instruction (7) + link jump (5)
+$MIN_CAVE = ($prog | ForEach-Object { $_.B.Count } | Measure-Object -Maximum).Maximum + 5   # longest instruction + link jump
 $caves = New-Object System.Collections.ArrayList
 $run = 0; $start = -1
 $endRaw = $text.RawPtr + [Math]::Min($text.RawSize, $text.VSize)
 for ($i = $text.RawPtr; $i -lt $endRaw; $i++) {
     if ($b[$i] -eq 0xCC) { if ($run -eq 0) { $start = $i }; $run++ }
     else {
-        if ($run -ge $MIN_CAVE) { [void]$caves.Add(@{ Off = $start; Len = $run }); if ($caves.Count -ge 10) { break } }
+        if ($run -ge $MIN_CAVE) { [void]$caves.Add(@{ Off = $start; Len = $run }); if ($caves.Count -ge 24) { break } }
         $run = 0
     }
 }
@@ -401,7 +491,7 @@ $prevEnd = $true
 for ($k = 0; $k -lt $prog.Count; $k++) {
     $ins = $prog[$k]
     $need = $ins.B.Count + $(if ($ins.End) { 0 } else { 5 })
-    if ($need -gt $left) {
+    while ($need -gt $left) {
         $ci++
         if ($ci -ge $caves.Count) { Fail "not enough code-cave space in .text." }
         if (-not $prevEnd) { $links += @{ Off = $pos; To = $caves[$ci].Off } }
@@ -450,10 +540,21 @@ else { Copy-Item $dll $backup -Force; Ok "backed up original -> ProjectDiablo.dl
 
 Emit $t.Jne ([byte[]](0x90, 0x90))
 Ok "gate jne -> nop nop (hook table now installs under -plugy)"
-Emit ($t.Entry + 8) ([BitConverter]::GetBytes([uint32]$codeVa))
+# the panel hook record {module, offset, handler, relative, size} with our code as
+# handler, right after the kept hooks: entry 14 on Season 13 (where it already is),
+# entry 13 on Season 14 (moved up from 35, in place of entry 13)
+$keep = Get-Keep $b $t
+$panelSlot = $t.TableOff + $keep * 20
+$rec = [byte[]]$b[$t.Entry..($t.Entry + 19)]
+[Array]::Copy([BitConverter]::GetBytes([uint32]$codeVa), 0, $rec, 8, 4)
+Emit $panelSlot $rec
+if ($t.PanelIndex -ne $keep) {
+    Ok ("panel hook moved from entry {0} to {1} (entry 13 and the {2} new hooks stay off)" -f $t.PanelIndex, $keep, ($t.PanelIndex - $S13_PANEL))
+}
 Ok ("panel handler 0x{0:X8} -> 0x{1:X8}" -f $origHandler, $codeVa)
-Emit ($t.Entry + 20) ([BitConverter]::GetBytes([uint32]0x1B))
-Ok "hook table terminated after the panel entry"
+Emit ($panelSlot + 20) ([BitConverter]::GetBytes([uint32]0x1B))
+if ($keep -eq $S13_PANEL) { Ok ("hook table ends after entry {0} - the {1} hooks tested on Season 13" -f $keep, ($keep + 1)) }
+else { Ok ("hook table ends after entry {0} - Season 13's hooks, minus the call PlugY hooks (0x4437C)" -f $keep) }
 
 [System.IO.File]::WriteAllBytes($dll, $b)
 

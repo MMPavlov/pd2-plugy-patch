@@ -29,7 +29,7 @@ param([string]$Path, [int]$MaxAttempts = 10, [switch]$NoPause,
       [switch]$Testing, [string]$GameArgs = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "3.2.1"
+$VERSION = "4.0.0"
 
 # extra arguments for PlugY.exe, which passes them on to Game.exe
 $extra = @()

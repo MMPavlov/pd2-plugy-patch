@@ -6,6 +6,54 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 4.0.0 — 2026-10-27
+
+Major version: what's written into `ProjectDiablo.dll` on Season 14 changed. Season 13
+output is byte-identical to 3.1.0–3.2.1.
+
+### Added
+- **Season 14 support.** Stat ranges with PlugY's stash pages on Season 14. Tested in
+  game on the Season 14 hotfix build: ranges show, pages go both ways, one tooltip.
+  - Season 14's hook table has 65 entries. The first 14 are the same as Season 13's,
+    then come 21 new hooks (PD2's rewrite of the party portraits), then the panel
+    hook at entry 35. The patch moves the panel record up and ends the table there,
+    so PD2 installs only hooks that were tested with PlugY.
+  - **PD2's entry 13 is left out on Season 14.** It hooks the same D2Client call as
+    PlugY (`0x4437C`, PlugY's `/players` default). On Season 13, D2Win loaded
+    `ProjectDiablo.dll` itself; on Season 14 it doesn't, so PD2 now installs after
+    PlugY and wins that call. Its Season 14 version wraps the UI draw with the new
+    stash's logic, and with it every PlugY stash page button went to the next page.
+  - **No more second tooltip on Season 14.** D2's own panel draw (which the patch
+    runs so PlugY's pages appear) printed D2's plain tooltip next to PD2's augmented
+    one; on Season 13 they line up, on Season 14 they don't. On Season 14 the panel
+    code now moves D2's mouse position off-screen during that draw and puts it back
+    before PD2's renderer. The mouse variables are read from the panel draw's own
+    code, not hard-coded.
+- Only the first 14 hooks of a known season are accepted. A build whose hooks differ
+  gets *this version of PD2 isn't supported yet* and nothing is written.
+
+### Fixed
+- **PD2's module table is now found inside the hook installer.** On Season 14 the
+  first match for its pattern in the file points somewhere else, so any 3.x patch on
+  Season 14 read the wrong table and couldn't have worked.
+- A Season 14 DLL patched by 3.x is upgraded automatically from the backup.
+- The code-cave packer skips caves too small for the next instruction, and the cave
+  size follows the longest instruction.
+
+### Changed
+- README: Season 14 setup now includes the patch; the "Which season?" table and
+  troubleshooting are updated.
+- Launcher reports 4.0.0 too (no functional change).
+
+### Checked
+- 55 offline checks across Season 13 (`579987ED`, `538A77B7`) and Season 14 (open
+  beta, launch, hotfix): fresh patch, re-run, restore, upgrades from 2.2.0, 3.1.0 and
+  the pre-release 4.0.0 builds, a simulated future season, and Restore refusing a
+  backup from another season. An independent disassembler check confirms the hooks
+  PD2 will install and the injected code on each build.
+- The Season 13 rollback zip on the mirror was re-uploaded on 22 Oct: same game files,
+  minus five settings files, so extracting it no longer resets your settings.
+
 ## 3.2.1 — 2026-10-24
 
 Season 14 is live. Fixes for people whose game the PD2 launcher just updated.

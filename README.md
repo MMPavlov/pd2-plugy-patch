@@ -8,9 +8,8 @@ multi-page / shared stash working**.
 > ⚠ **Single player only.** This modifies the game client. Do not use it on the
 > PD2 online realm — restore the original first (see below).
 
-> **Season 14 is live, and this patch works on Season 13 only.** On Season 14,
-> `Run-Patch.bat` says *this version of PD2 isn't supported yet* and changes nothing.
-> For stat ranges with PlugY, roll back to Season 13. See *Which season?* below.
+> **Season 14 is supported from 4.0.0 on**, as well as the Season 13 rollback.
+> See *Which season?* below.
 
 **Version:** printed at the top of the patch window when it runs. See
 `CHANGELOG.md` for what changed between versions, and include the version number
@@ -30,37 +29,41 @@ when reporting a problem.
 
 ## Which season?
 
-PD2 is on Season 14 now. [TDL's PlugY pack](https://github.com/TDLofCC/PD2-PlugY), its
-testing modpack and this patch were all made for **Season 13**.
+PD2 is on Season 14 now. [TDL's PlugY pack](https://github.com/TDLofCC/PD2-PlugY) and
+its testing modpack were made for **Season 13**; this patch works on both.
 
 | | Season 14 (current) | Season 13 (rollback) |
 |---|---|---|
-| PlugY's stash pages ([TDL's pack](https://github.com/TDLofCC/PD2-PlugY)) | yes¹ | yes |
-| green stat ranges with PlugY (this patch) | **not yet** | yes |
+| PlugY's stash pages ([TDL's pack](https://github.com/TDLofCC/PD2-PlugY)) | yes | yes |
+| green stat ranges with PlugY (this patch) | yes, from 4.0.0 | yes |
 | TDL's testing modpack | **no**, its files are Season 13's | yes |
 | `Launch-PD2-PlugY.bat` (fixes *Read process memory failed*) | yes | yes |
-| PD2 launcher | use it as normal | **never open it** |
+| PD2 launcher | use it as normal, then re-run `Run-Patch.bat` | **never open it** |
 
-¹ Season 14 still has PD2's PlugY compatibility mode, and `D2Client.dll` (the file
-PlugY changes) is byte-identical to Season 13's, so PlugY should run as before, just
-without stat ranges. Not play-tested here on Season 14.
+Season 14 was tested in game on one install (the Season 14 hotfix build, PlugY 14.03):
+stat ranges show, PlugY's stash pages go both ways, and only PD2's tooltip is drawn.
+PD2's own new Season 14 stash (its tabs, the cube on the stash page, search) is drawn
+too, but hasn't been tested alongside PlugY — use PlugY's page buttons.
 
-### Season 14: PlugY without stat ranges
+### Season 14: PlugY with stat ranges
 
 1. **Diablo II: Lord of Destruction + Project Diablo 2**, updated to Season 14 by the
    PD2 launcher as usual. **Back up `Diablo II\Save`** first.
 2. **PlugY.** From [TDLofCC/PD2-PlugY](https://github.com/TDLofCC/PD2-PlugY), download
    `PD2-PlugY-with-Extras.zip` (or `PD2-PlugY.zip` for PlugY on its own). Copy its
    `ProjectD2` and `Save` folders into your `Diablo II` folder, merging with what's there.
-3. **The launcher from this repo.** Download the zip from
+3. **This patch.** Download the zip from
    [Releases](https://github.com/MMPavlov/pd2-plugy-patch/releases), copy its files into
-   `Diablo II\ProjectD2`, and play with **`Launch-PD2-PlugY.bat`**. You don't need
-   `Run-Patch.bat`: on Season 14 it only says it isn't supported yet.
-4. **Leave testing mode alone.** Don't use `Launch-PD2-PlugY (testing).bat` or TDL's
+   `Diablo II\ProjectD2` and double-click **`Run-Patch.bat`** (details under *Install*
+   below).
+4. **Play** with **`Launch-PD2-PlugY.bat`**. Point your desktop shortcut at it.
+5. **Leave testing mode alone.** Don't use `Launch-PD2-PlugY (testing).bat` or TDL's
    *PlugY (testing)* shortcut, and keep `-direct -txt` out of `Param=` in `PlugY.ini`.
    Testing mode loads the text files in `ProjectD2\data\global\excel`, and TDL's are
    copies of Season 13's cube recipes and unique items, so the game would run on
    Season 13 data. Wait until TDL updates the pack.
+6. **After every PD2 update, double-click `Run-Patch.bat` again** — the PD2 launcher
+   puts the original `ProjectDiablo.dll` back.
 
 ### Season 13: PlugY with stat ranges (rollback)
 
@@ -106,22 +109,17 @@ logs and a loot filter, none of which the Season 13 game loads.
 
 - **The update removed the patch.** The PD2 launcher replaced `ProjectDiablo.dll` with
   the Season 14 one. That's why the stat ranges are gone.
-- **Your `ProjectDiablo.dll.stock-backup` is still the Season 13 DLL.** Don't copy it
-  back by hand: a Season 13 DLL in a Season 14 game breaks it. From 3.2.1 on,
-  `Restore-Original.bat` checks for this and refuses.
-- **Replace the old patch files in your folder with 3.2.1 or newer.** Versions before
-  3.2.0 don't check the season: their `Run-Patch.bat` patches Season 14 untested and
-  overwrites your Season 13 backup.
-- **If you ran an old `Run-Patch.bat` after the update**, run the new one:
-  it says *PATCHED BY AN OLDER VERSION - NOT SUPPORTED*. Then double-click
-  `Restore-Original.bat` to undo it.
-- **To get the stat ranges back**, roll back: steps 2 and 4 of the Season 13 setup.
-  Back up `Diablo II\Save` first, because characters you played on Season 14 may not
-  load on Season 13.
+- **Get 4.0.0 or newer and run its `Run-Patch.bat`.** Older versions don't handle
+  Season 14: before 3.2.0 they patched it wrongly, and 3.2.x refuse it. 4.0.0 also
+  repairs a Season 14 DLL that an older version patched.
+- **Your old `ProjectDiablo.dll.stock-backup` is the Season 13 DLL.** Don't copy it
+  back by hand: a Season 13 DLL in a Season 14 game breaks it. `Run-Patch.bat`
+  replaces it with the Season 14 original when it patches; to roll back later you use
+  the mirror zip, not this file.
 
 ## Install
 
-For a game that already has PD2 (on **Season 13**) and PlugY:
+For a game that already has PD2 (Season 13 or 14) and PlugY:
 
 1. **Close Diablo II completely.**
 2. Copy all the files into your Project Diablo 2 folder — the one that has
@@ -185,17 +183,18 @@ Open the stash and PlugY's page arrows should be along the top.
 The PD2 launcher **puts the original `ProjectDiablo.dll` back** whenever it updates,
 which silently removes the patch — the stat ranges just disappear again.
 
-**Within a season: double-click `Run-Patch.bat` again.** That's it.
+**Fix: double-click `Run-Patch.bat` again.** That's it.
 
 You don't need a new version of the patch for each PD2 update. It doesn't use fixed
 addresses — it finds the code to change by searching for byte patterns, so it adapts
 to new builds automatically. (Tested on both Season 13 builds, `579987ED` and
-`538A77B7`; the `s13p2m2` mirror installs `538A77B7`.) Running it on an already-patched
-DLL is harmless; it just says `ALREADY PATCHED`.
+`538A77B7` — the `s13p2m2` mirror installs `538A77B7` — and on three Season 14 builds:
+open beta, launch and the first hotfix.) Running it on an already-patched DLL is
+harmless; it just says `ALREADY PATCHED`.
 
-**A new season** can change more than addresses. Season 14 rearranges the hook table
-this patch edits, so on Season 14 the patch stops with *this version of PD2 isn't
-supported yet* and changes nothing. See *Patched on Season 13, now updated to Season 14*.
+**A new season** can change more than addresses: Season 14 needed 4.0.0. If a future
+season changes the PD2 hooks this patch relies on, it stops with *this version of PD2
+isn't supported yet* and changes nothing.
 
 **On the Season 13 rollback** there shouldn't be any updates: don't open the PD2
 launcher. If it updated you anyway, redo the rollback (Season 13 setup, step 2), then
@@ -235,19 +234,23 @@ The DLL is fine — the problem is how the game is launched:
 > So shortcut arguments *are* passed on — they're added in front of `Param=`.
 > (`-w` is added when PlugY.ini enables windowed mode.)
 
+**Every stash page button goes to the next page** (Season 14)
+That's what versions before 4.0.0 do on Season 14. Run `Run-Patch.bat` from 4.0.0 or
+newer; it upgrades the DLL.
+
 **`FAILED: signature ... not found`**
 PD2 changed its code enough that the patterns no longer match. Nothing was written,
 your DLL is untouched. The patch needs updating for that build.
 
 **`FAILED: this version of PD2 isn't supported yet`**
-Your game is on Season 14. The patterns still match, but PD2 now installs 21 extra
-hooks ahead of the one this patch redirects, and that combination hasn't been tested
-with PlugY. Nothing was changed. PlugY should still run, just without stat ranges. For stat
-ranges, roll back to Season 13 (Season 13 setup, step 2) and run `Run-Patch.bat` again.
+The game is on a PD2 build whose first hooks differ from the ones this patch works
+with on Seasons 13 and 14 — most likely a new season. Nothing was changed. PlugY should
+still run, just without stat ranges. The patch needs updating for that build; until
+then, for stat ranges with PlugY, roll back to Season 13.
 
-**`PATCHED BY AN OLDER VERSION - NOT SUPPORTED`**
-A version of this script before 3.2.0 patched your Season 14 DLL; those versions didn't
-check the season. It's untested, so undo it with `Restore-Original.bat`.
+**`PATCHED, BUT THIS PD2 VERSION ISN'T SUPPORTED`**
+Another version of this script patched a PD2 build this one doesn't know. Undo it with
+`Restore-Original.bat`.
 
 **`ProjectDiablo.dll isn't patched - nothing to restore`** (from `Restore-Original.bat`)
 Normal after a PD2 update: the update already put an unpatched DLL in place. Nothing
@@ -265,12 +268,13 @@ nothing is changed.
 
 ## Known quirks
 
-- **Tooltips draw twice.** You'll see a faint second copy behind the augmented
-  tooltip, most noticeable on rings. Cosmetic — everything is readable and correct.
+- **Tooltips draw twice on Season 13.** You'll see a faint second copy behind the
+  augmented tooltip, most noticeable on rings. Cosmetic — everything is readable and
+  correct. On Season 14 the patch hides D2's own copy, so you only see PD2's.
 - **Occasional hang on the loading screen.** If it happens, end `Game.exe` in Task
   Manager and relaunch. Save often.
-- **Stash page names overlap.** PlugY's red `Shared Page N` and PD2's
-  `Personal Bank` are printed in the same spot at the bottom of the stash.
+- **Stash page names overlap.** PlugY's red `Shared Page N` is printed where PD2 has
+  its own text: `Personal Bank` on Season 13, the search field on Season 14.
 
 All three come from the same cause: PD2 and PlugY each want to draw the
 inventory/stash panel, so the patch runs both renderers — PlugY's first, PD2's on top.
@@ -291,26 +295,29 @@ old season's DLL into an updated game.
 
 `ProjectDiablo.dll` checks the command line for `-plugy` (stored as UTF-16, so a
 plain-text search of the file won't find it). When present, PD2 enters a
-compatibility mode and **skips installing its runtime hook table** (35 entries in Season 13) —
-and one of those hooks is what feeds item descriptions through BH's augmentation.
-(Season 14's table has 65 entries, with the panel hook moved to entry 35. That's why
-Season 14 isn't supported yet.)
+compatibility mode and **skips installing its runtime hook table** — and one of those
+hooks is what feeds item descriptions through BH's augmentation.
 
-The awkward part is hook **entry 14**: it replaces D2Client's inventory/stash panel
+The awkward part is the **panel hook**: it replaces D2Client's inventory/stash panel
 draw (`D2Client+0x99440`), which is the exact function PlugY patches *inside* to add
 its stash pages. Both mods want the same function.
 
 The patch:
 
 1. **Gate** — `jne` → `nop nop`, so the hook table installs even under `-plugy`.
-2. **New panel code** — 57 bytes, packed into unused `int3` padding in `.text`
-   (spread over several small gaps and chained with jumps):
+2. **New panel code** — packed into unused `int3` padding in `.text` (spread over
+   several small gaps and chained with jumps):
    ```asm
    push esi
    call $+5 / pop eax          ; where am I? (position-independent)
    mov  esi, [eax + d]         ; PD2's module table, slot 0 = D2Client base
+   ; Season 14 only: hide the mouse from D2's own panel draw, so it doesn't print
+   ; its plain tooltip next to PD2's
+   push [esi + MouseX] / push [esi + MouseY]
+   mov  [esi + MouseX], 7FFFh / mov [esi + MouseY], 7FFFh
    lea  eax, [esi + 0x99440]   ; D2Client's panel draw (PlugY's stash pages live here)
    call eax                    ;   1. run it
+   pop  [esi + MouseY] / pop [esi + MouseX]    ; (Season 14 only)
    call <PD2 renderer>         ;   2. PD2's renderer (BH augmentation, PD2's frame)
    cmp  dword [esi + uiState+0x19*4], 0   ; stash open?
    jnz  buttons
@@ -322,9 +329,16 @@ The patch:
    ```
    Nothing in it is an absolute address, so it still works if Windows loads
    ProjectDiablo.dll or D2Client.dll somewhere other than their usual address.
-3. **Redirect** — entry 14 now points at that code instead of PD2's renderer.
-4. **Terminate** — the table stops after entry 14; later hooks assume PD2 owns
-   the panel and would conflict.
+3. **Redirect and cut the table** — only hooks tested alongside PlugY stay:
+   - **Season 13** (35 entries): entries 0–13 stay, entry 14 (the panel hook) now
+     points at the code above, and the table ends after it. Later hooks assume PD2
+     owns the panel and would conflict.
+   - **Season 14** (65 entries): entries 0–13 are the same as Season 13's, then 21 new
+     hooks (PD2's rewrite of the party portraits), then the panel hook at entry 35.
+     The panel record is moved up to entry 13 and the table ends after it. Entry 13
+     is left out because PlugY hooks the same call (`D2Client+0x4437C`): on Season 14
+     PD2 installs after PlugY, and its Season 14 version of that hook made every
+     stash page button go to the next page.
 
 Everything is located by signature at run time:
 
@@ -332,12 +346,14 @@ Everything is located by signature at run time:
 |---|---|
 | `-plugy` gate | `80 3D ?? ?? ?? ?? 00  75 ??  B9 ?? ?? ?? ??  E8`, the match whose table holds the panel hook entry (Season 14 has two matches) |
 | hook table address | read from the `B9` operand above |
-| panel hook entry | 20-byte record `{0, 0x000C3B18, handler, 1}` |
-| module base table | `8B 04 C5 ?? ?? ?? 10` in the hook installer |
+| panel hook entry | 20-byte record `{0, 0x000C3B18, handler, 1}`; on Season 14 the last one in the table is PD2's original |
+| first 14 hooks | checked against Season 13's list — anything else is refused |
+| module base table | `8B 04 C5 ?? ?? ?? 10` inside the hook installer the gate calls (Season 14 has other matches earlier in the file) |
 | panel-draw target | decoded from the `call` at `D2Client.dll` RVA `0xC3B17` |
 | stash-button call | `call` at `D2Client.dll` RVA `0x99A55` (the one PlugY hooks), checked |
 | stash-open flag | D2Client's `GetUIState` (`83 F8 26 … 8B 04 85 ???????? C3`), UI index `0x19` |
-| code caves | runs of ≥12 `0xCC` bytes in the mapped part of `.text` |
+| mouse position | the `mov eax,[MouseX]` / `mov ecx,[MouseY]` at the start of the panel draw (Season 14) |
+| code caves | runs of `0xCC` at least as long as the longest instruction + a 5-byte jump, in the mapped part of `.text` |
 
 Running it on a DLL patched by an older version upgrades it automatically, starting
 from `ProjectDiablo.dll.stock-backup`.
