@@ -6,6 +6,83 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 6.0.0 — 2026-10-28
+
+Major version: what's written into `ProjectDiablo.dll` on Season 14 changed. Season 13
+output is byte-identical to 3.1.0–5.0.0.
+
+### Fixed
+- **Season 14: PD2's stash categories work with PlugY.** Gems, runes and other materials
+  can be put into Gems, Runes and the other categories, and taken out. The Stash
+  category stays PlugY's: its pages and its buttons. Two things were in the way:
+  - **PD2's own stash clicks.** PD2 has its own handlers for the stash's left click,
+    right click, left release, mouse move, Esc and Space, in D2Client's stash message
+    table (`D2Client+0xDBDB8`, hook records 52–57). Up to 5.0.0 the patch left them out,
+    because they replace the D2 handlers PlugY's page buttons hook into. Each of those
+    rows now gets a small switch (hook-table slots 16–21): D2's handler on the Stash
+    category, PD2's on the others. It uses the same Stash-tab check as 5.0.0. The
+    records are found at run time; the left click must be among them ("signature 6").
+  - **PD2's PlugY mode.** With PlugY, PD2 turns its material storage off: it skips
+    depositing, taking out, showing the counts, and saving and loading them. It checks
+    for PlugY in 18 places around its stash. The 14 around its material storage now
+    have their jump turned into nops. The 4 around its own stash pages (switching them,
+    putting items on them) stay, so PlugY keeps the Stash category ("signature 7").
+- **Materials saved apart from PD2's own shared stash.** PD2 keeps materials in
+  `pd2_shared.stash`, together with its own shared stash pages, which PlugY replaces.
+  Under PlugY, the 7 calls that build the path of that file and of
+  `pd2_shared.compendium` now go through a file switch that skips the name's first 4
+  characters. So with PlugY, materials are kept in `Save\shared.stash` and
+  `shared.compendium` (hardcore `hc_…`), and PD2's own files are never touched
+  ("signature 8"). Without PlugY nothing changes.
+- **PD2's stash page tabs hidden under PlugY.** PD2's tabs along the top of the stash
+  (P, I–IX) were drawn behind PlugY's page buttons, and did nothing with PlugY. PD2's
+  panel draw already skips them on the categories. Its check for that now calls a tabs
+  check, which also skips them under PlugY ("signature 9"). Without PlugY they're drawn
+  as before.
+- A Season 14 DLL patched by 5.0.0, an older version or an earlier 6.0.0 test build is
+  upgraded automatically from the backup.
+- The first 6.0.0 test build (the switches alone) was tried in game: nothing went in.
+  That's how PD2's PlugY mode was found.
+
+### Changed
+- The code-cave search now collects up to 128 gaps (was 64); Season 14 now needs 60.
+  The first 35 hold exactly what 5.0.0 wrote there.
+- Launcher reports 6.0.0 too (no functional change).
+
+### Checked
+- 144 offline checks on Season 13 (`579987ED`, `538A77B7`), Season 14 (open beta, launch,
+  hotfix) and the Single Player Plus 14.0.1 DLL:
+  - On each: fresh patch, re-run, restore.
+  - On Season 13: byte-identical to 3.1.0, 4.0.0 and 5.0.0.
+  - On Season 14: every byte 5.0.0 writes is kept, except its end of table.
+  - Upgrades from 3.1.0, 4.0.0, the 5.0.0 test build, 5.0.0 and both earlier 6.0.0
+    test builds (and pre-release 4.0.0 builds) all match a fresh patch.
+  - On the Single Player Plus DLL, the mod's own changes and PD2's file names are
+    untouched.
+  - Refusals: a build without PD2's left-click handler record ("signature 6"), with its
+    page check changed ("signature 7"), without its shared-stash file name
+    ("signature 8"), or without its stash tab image ("signature 9"), and a D2Client
+    whose stash message table differs.
+- An independent disassembler check, on every build, confirms:
+  - each switch, its record and both handlers;
+  - the 18 PlugY checks: 14 with nops, 4 untouched;
+  - the 7 file calls, the file switch, and the names it gives under PlugY;
+  - the tabs check.
+- In a CPU emulator, at the usual address and relocated:
+  - the switches reach D2's handler on tabs 0–9 and PD2's otherwise;
+  - the file switch passes PD2's names through without PlugY and the shortened ones
+    with it;
+  - PD2's own tab draw skips the tabs under PlugY or when its own flag is set, and draws
+    them otherwise;
+  - return address, argument and registers are kept in both.
+- **Tested in game** with PlugY 14.03, on the Single Player Plus 14.0.1 DLL (Season 14
+  launch build):
+  - gems go into Gems and come back out;
+  - a deposited one was saved in `Save\shared.stash`, which holds no items, and PD2's
+    `pd2_shared.stash` wasn't touched;
+  - PD2's P, I–IX tabs are gone;
+  - PlugY's page buttons still work on the Stash category.
+
 ## 5.0.0 — 2026-10-27
 
 Major version: what's written into `ProjectDiablo.dll` on Season 14 changed. Season 13

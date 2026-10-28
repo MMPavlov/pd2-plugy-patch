@@ -40,14 +40,36 @@ its testing modpack were made for **Season 13**; this patch works on both.
 | `Launch-PD2-PlugY.bat` (fixes *Read process memory failed*) | yes | yes |
 | PD2 launcher | use it as normal, then re-run `Run-Patch.bat` | **never open it** |
 
-Season 14 was tested in game on one install (the Season 14 hotfix build, PlugY 14.03):
-stat ranges show, PlugY's stash pages go both ways, and only PD2's tooltip is drawn.
-PD2's own new Season 14 stash (its tabs, the cube on the stash page, search) is drawn
-too, but hasn't been tested alongside PlugY — use PlugY's page buttons.
+Season 14 was tested in game on one install with PlugY 14.03, first on the Season 14
+hotfix build and then on the Single Player Plus mod's DLL (the launch build). Stat
+ranges show, PlugY's stash pages go both ways, and only PD2's tooltip is drawn. PD2's
+categories (Gems, Runes, …) work from 6.0.0. The cube on the stash page and the search
+field are drawn too, but haven't been tested alongside PlugY.
 
 From 5.0.0, PlugY's page buttons show only on PD2's **Stash** category (the first one
 down the left of the stash). On Gems, Runes and the other categories they're hidden and
 can't be clicked, so PlugY's pages no longer turn behind PD2's storage.
+
+From 6.0.0, those categories are PD2's own again: you can put gems, runes and other
+materials in, and take them out. With PlugY, PD2 normally switches its material storage
+off. 6.0.0 turns it back on and gives those categories PD2's own stash clicks. On the
+Stash category everything stays as before: PlugY's pages, PlugY's buttons.
+
+| what | where it's kept with PlugY |
+|---|---|
+| items on the Stash category | PlugY's stash pages (`.d2x`, `_LOD_SharedStashSave.sss`) |
+| gems, runes, … on the other categories | `Save\shared.stash` (hardcore: `hc_shared.stash`) |
+| PD2's compendium (Uniques, Sets) | `Save\shared.compendium` (hardcore: `hc_shared.compendium`) |
+
+PD2's own stash page tabs along the top of the stash (P, I–IX) are hidden under PlugY,
+where PlugY's page buttons are; they didn't do anything with PlugY anyway.
+
+PD2's own `pd2_shared.stash` and `pd2_shared.compendium` aren't touched under PlugY: they
+also hold PD2's own shared stash pages, which PlugY replaces. So what you put in with
+PlugY stays apart from what you put in when you play PD2 without PlugY.
+
+Before 6.0.0, a click on a category with an item on the cursor went to the PlugY page
+hidden behind it.
 
 ### Season 14: PlugY with stat ranges
 
@@ -193,8 +215,10 @@ You don't need a new version of the patch for each PD2 update. It doesn't use fi
 addresses — it finds the code to change by searching for byte patterns, so it adapts
 to new builds automatically. (Tested on both Season 13 builds, `579987ED` and
 `538A77B7` — the `s13p2m2` mirror installs `538A77B7` — and on three Season 14 builds:
-open beta, launch and the first hotfix.) Running it on an already-patched DLL is
-harmless; it just says `ALREADY PATCHED`.
+open beta, launch and the first hotfix, plus the
+[Single Player Plus](https://github.com/Lukaszpg/PD2-Single-Player-Plus-mod) mod's
+14.0.1 DLL, which is the launch build with the mod's own changes.) Running it on an
+already-patched DLL is harmless; it just says `ALREADY PATCHED`.
 
 **A new season** can change more than addresses: Season 14 needed 4.0.0. If a future
 season changes the PD2 hooks this patch relies on, it stops with *this version of PD2
@@ -287,6 +311,12 @@ inventory/stash panel, so the patch runs both renderers — PlugY's first, PD2's
 border. They're now redrawn on top of PD2's frame whenever the stash is open (on
 Season 14, from 5.0.0, only on PD2's Stash category).
 
+*Fixed in 6.0.0* (Season 14): you couldn't put gems, runes or other materials into
+PD2's stash categories, and they were always empty. With PlugY, PD2 switches its
+material storage off, and the patch had left PD2's own stash clicks out (they replace
+the D2 ones PlugY's page buttons hook into). Now the categories have both, and keep
+their contents in `Save\shared.stash`.
+
 ## Undo
 
 Double-click **`Restore-Original.bat`** — it copies `ProjectDiablo.dll.stock-backup`
@@ -363,6 +393,45 @@ The patch:
    call <D2's own target of the call PlugY took over>
    add  dword [esp], 0Bh / ret 4   ; ...and carry on after that call, skipping PlugY's
    ```
+   Then the **handler switches**. PD2 has its own handlers for the stash's left click,
+   right click, left release, mouse move, Esc and Space; putting a material in a
+   category happens there. PD2 writes them into D2Client's stash message table
+   (`D2Client+0xDBDB8`, rows of `{type, message, handler}`), in place of the D2
+   handlers PlugY hooks into. Each row gets a switch instead:
+   ```asm
+   call <PD2 IsStashTab> / test al, al / jz pd2
+   mov  eax, <D2's handler>    ; Stash category: D2's handler, with PlugY's buttons
+   call $+5 / pop ecx / mov ecx, [ecx + d]   ; D2Client base via the module table
+   add  eax, ecx / jmp eax
+   pd2:
+   jmp  <PD2's handler>        ; other categories: PD2's own
+   ```
+   And the **file switch**. PD2 checks for PlugY (the flag the gate tests) in 18 places
+   around its stash. The 14 around its material storage get their `jne` turned into
+   `nop`s: depositing, taking out, showing the counts, and saving and loading them.
+   The 4 around PD2's own stash pages (switching them, putting items on them) stay, so
+   the Stash category stays PlugY's. Saving and loading would then use
+   `pd2_shared.stash`, which also holds PD2's own shared pages. So the 7 calls that
+   build the path of that file and of `pd2_shared.compendium` call the file switch,
+   which skips the name's first 4 characters under PlugY:
+   ```asm
+   call $+5 / pop eax
+   cmp  byte [eax + d], 0      ; the PlugY flag (position-independent)
+   jz   path
+   add  dword [esp+4], 4       ; "pd2_shared.stash" -> "shared.stash"
+   path: jmp <PD2's path builder>
+   ```
+   Last, the **tabs check**. PD2's panel draw skips its stash page tabs (P, I–IX) when
+   `cmp dword [esp+24h], 0` finds its flag set, as on the categories. That `cmp` becomes
+   a call to:
+   ```asm
+   cmp  dword [esp+28h], 0     ; its [esp+24h]: set -> skipped, as before
+   jnz  done
+   push eax / call $+5 / pop eax
+   cmp  byte [eax + d], 0      ; under PlugY: skipped too
+   pop  eax
+   done: ret                   ; its jne acts on these flags
+   ```
    Nothing in any of them is an absolute address, so they still work if Windows loads
    ProjectDiablo.dll or D2Client.dll somewhere other than their usual address.
 3. **Redirect and cut the table** — only hooks tested alongside PlugY stay:
@@ -373,7 +442,10 @@ The patch:
      hooks (PD2's rewrite of the party portraits), then the panel hook at entry 35.
      The panel record is moved up to entry 13, the click and draw gates go in entries
      14 and 15 (relative-call records on `D2Client+0x9B888` and `+0x99A4B`, like PD2's
-     own), and the table ends after them. Entry 13 is left out because PlugY hooks
+     own), the handler switches in 16–21 (copies of PD2's records 52–57 for the stash
+     message table, pointing at the switches), and the table ends after them. Every
+     record goes in a slot that held a pointer, so Windows relocates it with the DLL.
+     Entry 13 is left out because PlugY hooks
      the same call (`D2Client+0x4437C`): on Season 14 PD2 installs after PlugY, and its
      Season 14 version of that hook made every stash page button go to the next page.
 
@@ -393,6 +465,10 @@ Everything is located by signature at run time:
 | Stash-category check | PD2's `push 19h / call GetUIState / … / call IsStashTab / …`, its callee checked to be `cmp dword [tab], 9 / setbe al / ret` (Season 14) |
 | stash click site | `mov eax,ebx / call` at `D2Client.dll` RVA `0x9B885`, then `je` to `mov edi,ebx / call` at `0x9B8A3` (PlugY's mouse-down check), checked (Season 14) |
 | stash draw site | `push eax / mov byte [flag],4 / call / mov [flag],bl` at `D2Client.dll` RVA `0x99A42`, right before the stash-button call, checked (Season 14) |
+| PD2's stash handlers | PD2's records after its panel record that write a handler field of D2Client's stash message table (`+0xDBDB8`); D2's handler read from that row; the left click must be among them (Season 14) |
+| PD2's checks for PlugY | every `cmp byte [flag], 0/al/dl/bl` + `jne` on the gate's flag in `.text`: 18, of the same forms in the same order on every Season 14 build; the 4 kept are recognised by what follows them (Season 14) |
+| material files | `mov reg, <"pd2_[hc_]shared.stash" / ".compendium">`, then the next call into `.text`: 7, all to one path builder, which the save and load checks lead to (Season 14) |
+| stash page tabs | `cmp [esp+20h],0 / mov [esp+10h],edi / jne X / cmp [esp+24h],0 / jne X / mov eax,[img] / … / push <"…\panel\stashtabs">`, once (Season 14) |
 | code caves | runs of `0xCC` at least as long as the longest instruction + a 5-byte jump, in the mapped part of `.text` |
 
 Running it on a DLL patched by an older version upgrades it automatically, starting

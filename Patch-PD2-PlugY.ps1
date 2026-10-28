@@ -1,12 +1,16 @@
 <#
-    Patch-PD2-PlugY.ps1   v5.0.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v6.0.0   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
     PlugY, while keeping PlugY's multi-page / shared stash working - and draws
     PlugY's stash page buttons on top of PD2's panel frame so they're visible.
     On Season 14 the buttons only show and click on PD2's "Stash" category, not
-    on Gems, Runes and the other categories down the left of the stash.
+    on Gems, Runes and the other categories down the left of the stash. Those
+    get PD2's own stash clicks and its material storage back (PD2 turns that off
+    with PlugY), so gems, runes, ... can be put in. Under PlugY it's saved in
+    Save\shared.stash, apart from PD2's own pd2_shared.stash. PD2's own stash
+    page tabs (P, I-IX) are hidden under PlugY; its page buttons are there.
 
     Nothing is hardcoded to a particular ProjectDiablo.dll build. Every address is
     located by byte signature at run time, so this keeps working across PD2 updates.
@@ -31,7 +35,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "5.0.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "6.0.0"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -275,6 +279,158 @@ function Test-Gate([byte[]]$a, $tt, [int]$n, [int64]$call) {
     $r = $tt.TableOff + ((Get-Keep $a $tt) + $n) * 20
     (U32 $a $r) -eq 0 -and (U32 $a ($r + 4)) -eq ($call + 1) -and (U32 $a ($r + 12)) -eq 1
 }
+# Season 14: PD2 has its own handlers for the stash's left click, right click, left
+# release, mouse move, Esc and Space - the categories need them (putting gems, runes,
+# ... in happens there). It puts them in D2Client's stash message table (rows of
+# {type, message, handler}) with records further down its hook table. They replace the
+# D2 handlers PlugY hooks into, so this version puts a switch in each row instead, in
+# the slots after the gates: D2's handler on the Stash category, PD2's on the others.
+$STASH_MSGS = 0xDBDB8; $STASH_ROWS = 8
+# PD2's records for that table (file offsets): after its panel record, up to its table's end
+function Get-StashHandlers([byte[]]$a, $tt) {
+    $found = @()
+    for ($i = $tt.PD2PanelIndex + 1; $i -lt 256; $i++) {
+        $r = $tt.TableOff + $i * 20
+        if ((U32 $a $r) -eq 0x1B) { break }
+        $off = [int64](U32 $a ($r + 4))
+        if ((U32 $a $r) -eq 0 -and (U32 $a ($r + 12)) -eq 0 -and (U32 $a ($r + 16)) -eq 0 -and
+            $off -ge $STASH_MSGS -and $off -lt $STASH_MSGS + $STASH_ROWS * 12 -and ($off - $STASH_MSGS) % 12 -eq 8) { $found += $r }
+    }
+    $found      # callers wrap it in @()
+}
+# are they switched: one record per PD2 record, same row but not PD2's handler, then the end?
+function Test-Handlers([byte[]]$a, $tt) {
+    $hs = @(Get-StashHandlers $a $tt)
+    if ($hs.Count -eq 0) { return $false }
+    $r = $tt.TableOff + ((Get-Keep $a $tt) + 3) * 20
+    foreach ($h in $hs) {
+        if ((U32 $a $r) -ne 0 -or (U32 $a ($r + 4)) -ne (U32 $a ($h + 4)) -or (U32 $a ($r + 8)) -eq (U32 $a ($h + 8)) -or
+            (U32 $a ($r + 12)) -ne 0 -or (U32 $a ($r + 16)) -ne 0) { return $false }
+        $r += 20
+    }
+    (U32 $a $r) -eq 0x1B
+}
+$MSG_NAMES = @{ "0-200" = "mouse move"; "0-201" = "left click"; "0-202" = "left release"; "0-204" = "right click"; "3-1B" = "Esc"; "3-20" = "Space" }
+
+# Season 14: with PlugY (the flag the gate tests), PD2 turns its material storage off - the
+# Gems, Runes, ... categories - and doesn't load or save the file it's kept in,
+# pd2_shared.stash, which also holds PD2's own shared stash pages. This version turns the
+# material checks back on, and points PD2's shared-stash and compendium files 4 characters
+# into their names under PlugY (Save\shared.stash, shared.compendium, hc_...), so PD2's
+# own files and the items in them are never touched. PD2's checks around its own stash
+# pages stay as they are: PlugY's pages are the Stash category's.
+# The checks: cmp byte [flag],0|al|dl|bl / jne (once, mov [ebp-18h],eax in between), in
+# .text order; on every Season 14 build the same 18, of these forms. On the ones marked
+# "-" PD2 handles its own stash pages (switching them, putting items on them, ...).
+$PLUGY_FORMS = "c c b b c C c c d c c c c c c c a a"
+$PLUGY_KEEP  = @(2, 7, 10, 11)
+function Get-PlugyChecks([byte[]]$a, $p, $tt) {
+    $flag = [BitConverter]::GetBytes([uint32](U32 $a ($tt.Gate + 2)))
+    $text = $p.Sections | Where-Object { $_.Name -eq ".text" }
+    $sites = @(); $at = FindSig $a ([int[]]$flag) $text.RawPtr
+    while ($at -ge 0 -and $at -lt $text.RawPtr + $text.RawSize) {
+        $s = $at - 2; $form = $null
+        if ($a[$s] -eq 0x80 -and $a[$s + 1] -eq 0x3D -and $a[$at + 4] -eq 0 -and $s -ne $tt.Gate) { $form = "c"; $j = $s + 7 }
+        elseif ($a[$s] -eq 0x38 -and $a[$s + 1] -in 0x05, 0x15, 0x1D) { $form = @{ 0x05 = "a"; 0x15 = "d"; 0x1D = "b" }[[int]$a[$s + 1]]; $j = $s + 6 }
+        if ($form) {
+            if ($a[$j] -eq 0x89 -and $a[$j + 1] -eq 0x45) { $j += 3; $form = $form.ToUpper() }
+            $len = if ($a[$j] -eq 0x75 -or ($a[$j] -eq 0x90 -and $a[$j + 1] -eq 0x90 -and $a[$j + 2] -ne 0x90)) { 2 }
+                   elseif (($a[$j] -eq 0x0F -and $a[$j + 1] -eq 0x85) -or ($a[$j] -eq 0x90 -and $a[$j + 5] -eq 0x90)) { 6 } else { 0 }
+            $sites += [PSCustomObject]@{ Cmp = $s; Form = $form; Jne = $j; Len = $len; Off = ($a[$j] -eq 0x90) }
+        }
+        $at = FindSig $a ([int[]]$flag) ($at + 1)
+    }
+    $sites
+}
+# PD2's two file names this redirects, and the calls that build their path in the save
+# folder (path builder: ecx = out, edx = folder, one argument = the name). Found from the
+# mov reg,<name> that each loads the name with: the first call after it into .text (an
+# E8 byte inside another instruction, like shr al,2 = C0 E8 02, points somewhere else).
+$PD2_FILES = "pd2_shared.stash", "pd2_hc_shared.stash", "pd2_shared.compendium", "pd2_hc_shared.compendium"
+function Get-FileCalls([byte[]]$a, $p) {
+    $text = $p.Sections | Where-Object { $_.Name -eq ".text" }
+    $lo = [int64]$p.ImageBase + $text.VAddr; $hi = $lo + [Math]::Min($text.VSize, $text.RawSize)
+    $calls = @{}
+    foreach ($n in $PD2_FILES) {
+        $nb = [int[]][Text.Encoding]::ASCII.GetBytes($n + [char]0)
+        $no = FindSig $a $nb
+        if ($no -lt 0) { return $null }
+        $vb = [int[]][BitConverter]::GetBytes([uint32](OffToVa $p $no))
+        $at = FindSig $a $vb $text.RawPtr
+        while ($at -ge 0 -and $at -lt $text.RawPtr + $text.RawSize) {
+            if ($a[$at - 1] -ge 0xB8 -and $a[$at - 1] -le 0xBF) {
+                for ($k = $at + 4; $k -lt $at + 0x40; $k++) {
+                    if ($a[$k] -ne 0xE8) { continue }
+                    $to = (OffToVa $p $k) + 5 + [BitConverter]::ToInt32($a, $k + 1)
+                    if ($to -ge $lo -and $to -lt $hi) { $calls[$k] = $to; break }
+                }
+            }
+            $at = FindSig $a $vb ($at + 1)
+        }
+    }
+    $calls
+}
+# the checks kept as they are, recognised by what follows them: PD2's stash page switch
+# (cmp eax,0Ah ... mov byte [ebp-4],55h, its page packet), then two kinds of calls
+function Test-KeptChecks([byte[]]$a, $cs) {
+    $f = @($PLUGY_KEEP | ForEach-Object { $cs[$_].Jne + $cs[$_].Len })
+    $c1 = FindSig $a @(0x83,0xF8,0x0A) $f[0]; $c2 = FindSig $a @(0xC6,0x45,0xFC,0x55) $f[0]
+    $c1 -ge 0 -and $c1 -lt $f[0] + 0x40 -and $c2 -ge 0 -and $c2 -lt $f[0] + 0x50 -and
+    $a[$f[1]] -eq 0x8B -and $a[$f[1] + 1] -eq 0xD6 -and $a[$f[1] + 2] -eq 0x8B -and $a[$f[1] + 3] -eq 0xCB -and $a[$f[1] + 4] -eq 0xE8 -and
+    $a[$f[2]] -eq 0x8B -and $a[$f[2] + 1] -eq 0xCE -and $a[$f[2] + 2] -eq 0xE8 -and
+    $a[$f[3]] -eq 0x8B -and $a[$f[3] + 1] -eq 0xCE -and $a[$f[3] + 2] -eq 0xE8 -and ($cs[11].Cmp - $cs[10].Cmp) -lt 0x100
+}
+# do the last three checks guard PD2's saving and loading of those files: calls, right
+# after, to at least two functions that each build one of their paths?
+function Test-FileChecks([byte[]]$a, $p, $cs, $fc) {
+    $siteVas = @($fc.Keys | ForEach-Object { OffToVa $p $_ })
+    foreach ($i in 15, 16, 17) {
+        $f = $cs[$i].Jne + $cs[$i].Len; $n = 0
+        for ($k = $f; $k -lt $f + 0x90; $k++) {
+            if ($a[$k] -ne 0xE8) { continue }
+            $to = (OffToVa $p $k) + 5 + [BitConverter]::ToInt32($a, $k + 1)
+            if (@($siteVas | Where-Object { $_ -ge $to -and $_ -lt $to + 0x400 }).Count -gt 0) { $n++ }
+        }
+        if ($n -lt 2) { return $false }
+    }
+    $true
+}
+# Season 14: PD2's stash page tabs (P, I-IX) along the top of the stash. Its panel draw
+# skips them on the categories; this version skips them under PlugY too, whose page
+# buttons are there instead. The draw, around the image it loads for them:
+#   cmp dword [esp+20h],0 / mov [esp+10h],edi / jne X / cmp dword [esp+24h],0 / jne X /
+#   mov eax,[image] / test eax,eax / jnz / push eax / push <"...\stashtabs">
+# Its second cmp becomes a call to the tabs check (5 bytes either way).
+$TABS_SIG = @(0x83,0x7C,0x24,0x20,0x00, 0x89,0x7C,0x24,0x10, 0x0F,0x85,-1,-1,-1,-1, -2,-2,-2,-2,-2, 0x0F,0x85,-1,-1,-1,-1,
+              0xA1,-1,-1,-1,-1, 0x85,0xC0, 0x75,-1, 0x50, 0x68,-1,-1,-1,-1)
+$TABS_CMP = @(0x83,0x7C,0x24,0x24,0x00)
+function Find-TabsDraw([byte[]]$a, $p) {
+    foreach ($second in @($TABS_CMP, @(0xE8,-1,-1,-1,-1))) {
+        $sig = [int[]]($TABS_SIG | ForEach-Object { $_ }); for ($i = 0; $i -lt 5; $i++) { $sig[15 + $i] = $second[$i] }
+        $at = FindSig $a $sig
+        if ($at -ge 0) {
+            $no = RvaToOff $p ([int64](U32 $a ($at + 37)) - $p.ImageBase)
+            $name = if ($no -ge 0) { [Text.Encoding]::ASCII.GetString($a, $no, 30) } else { "" }
+            $same = ([BitConverter]::ToInt32($a, $at + 11) + 15) -eq ([BitConverter]::ToInt32($a, $at + 22) + 26)
+            if ($name -like "*\stashtabs*" -and $same -and (FindSig $a $sig ($at + 1)) -lt 0) {
+                return [PSCustomObject]@{ Site = $at + 15; Patched = ($a[$at + 15] -eq 0xE8) }
+            }
+        }
+    }
+    $null
+}
+# are PD2's material checks on and its files redirected (by this code: call $+5 / pop eax)?
+function Test-Materials([byte[]]$a, $p, $tt) {
+    $cs = @(Get-PlugyChecks $a $p $tt)
+    if ($cs.Count -ne 18) { return $false }
+    for ($i = 0; $i -lt $cs.Count; $i++) { if ($cs[$i].Off -ne ($i -notin $PLUGY_KEEP)) { return $false } }
+    $fc = Get-FileCalls $a $p
+    if (-not $fc -or $fc.Count -eq 0) { return $false }
+    $to = @($fc.Values | Sort-Object -Unique)
+    if ($to.Count -ne 1) { return $false }
+    $o = RvaToOff $p ($to[0] - $p.ImageBase)
+    $o -ge 0 -and $a[$o] -eq 0xE8 -and (U32 $a ($o + 1)) -eq 0 -and $a[$o + 5] -eq 0x58
+}
 function Test-HookSet([byte[]]$a, $tt) {
     if ($tt.PD2PanelIndex -lt $S13_PANEL) { return $false }
     for ($i = 0; $i -lt $S13_PANEL; $i++) {
@@ -352,12 +508,16 @@ if ($t.Patched) {
     $isV3 = ($ho -ge 0)
     if ($isV3) { for ($i = 0; $i -lt $V3_HEAD.Length; $i++) { if ($b[$ho + $i] -ne $V3_HEAD[$i]) { $isV3 = $false; break } } }
     # current: this code in the panel slot for this season; on Season 14 only, hiding
-    # the mouse from D2's panel draw and gating the stash clicks and PlugY's own button
-    # draw. Versions before 4.0.0 left the Season 14 panel hook at entry 35 (and 3.x
-    # read the wrong module table there), 4.0.0 had no gates - upgrade those.
+    # the mouse from D2's panel draw, gating the stash clicks and PlugY's own button
+    # draw, and switching the stash handlers. Versions before 4.0.0 left the Season 14
+    # panel hook at entry 35 (and 3.x read the wrong module table there), 4.0.0 had no
+    # gates, 5.0.0 no handler switches, the first 6.0.0 test build left PD2's material
+    # storage off - upgrade those.
     $s14 = Get-Season14 $b $t
     if ($isV3 -and $t.PanelIndex -eq (Get-Keep $b $t) -and (Test-HidesMouse $b $pe $t.Handler) -eq $s14 -and
-        (Test-Gate $b $t 1 $CLICK_CALL) -eq $s14 -and (Test-Gate $b $t 2 $DRAW_CALL) -eq $s14) {
+        (Test-Gate $b $t 1 $CLICK_CALL) -eq $s14 -and (Test-Gate $b $t 2 $DRAW_CALL) -eq $s14 -and
+        (Test-Handlers $b $t) -eq $s14 -and (Test-Materials $b $pe $t) -eq $s14 -and
+        [bool]((Find-TabsDraw $b $pe) | Where-Object { $_.Patched }) -eq $s14) {
         Write-Host ""
         Write-Host "  ============================================" -ForegroundColor Green
         Write-Host "   ALREADY PATCHED - nothing to do" -ForegroundColor Green
@@ -479,14 +639,53 @@ if ($gateStash) {
     $drawFlag = [int64](U32 $dc ($do + 3)) - $dpe.ImageBase
     Ok ("stash draw call   0x{0:X} (PlugY's buttons at 0x{1:X})" -f $DRAW_CALL, $BTN_CALL)
 
-    # their records go in the two slots after the panel record, which must hold pointers
+    # 11. ...and PD2's own stash handlers, each with the D2 handler of its row in D2Client's
+    #     stash message table
+    $handlers = @()
+    foreach ($h in @(Get-StashHandlers $b $t)) {
+        $ro  = RvaToOff $dpe ([int64](U32 $b ($h + 4)) - 8)
+        $d2h = if ($ro -ge 0) { [int64](U32 $dc ($ro + 8)) - $dpe.ImageBase } else { -1 }
+        $pdh = [int64](U32 $b ($h + 8))
+        if ($ro -lt 0 -or (RvaToOff $dpe $d2h) -lt 0 -or (RvaToOff $pe ($pdh - $pe.ImageBase)) -lt 0) {
+            Fail "PD2's stash handlers don't fit D2Client's stash message table - D2Client.dll isn't the 1.13c build PlugY expects."
+        }
+        $handlers += [PSCustomObject]@{ Rec = $h; Name = $MSG_NAMES[("{0:X}-{1:X}" -f (U32 $dc $ro), (U32 $dc ($ro + 4)))]; D2 = $d2h; PD2 = $pdh; Label = "" }
+    }
+    if (-not ($handlers | Where-Object { $_.Name -eq "left click" })) { Fail "signature 6 (PD2's stash left-click handler) not found in ProjectDiablo.dll." }
+    Ok ("stash handlers    {0} of PD2's in D2Client+0x{1:X}: {2}" -f $handlers.Count, $STASH_MSGS,
+        (($handlers | ForEach-Object { if ($_.Name) { $_.Name } else { "?" } }) -join ", "))
+
+    # their records go in the slots after the panel record, which must hold pointers
     # (relative-call hooks) in PD2's table, so Windows relocates the new ones with the DLL
-    foreach ($n in 1, 2) {
+    foreach ($n in 1..(2 + $handlers.Count)) {
         $gs = $t.TableOff + ((Get-Keep $b $t) + $n) * 20
         if ((RvaToOff $pe ([int64](U32 $b ($gs + 8)) - $pe.ImageBase)) -lt 0 -or (U32 $b ($gs + 12)) -ne 1 -or (U32 $b ($gs + 16)) -ne 0) {
             Fail "hook-table entry $((Get-Keep $b $t) + $n) isn't a call hook in this build - the stash gates can't go there."
         }
     }
+
+    # 12. ...PD2's checks for PlugY around its material storage and its own stash pages,
+    # 13. ...and the calls building the paths of its shared-stash and compendium files
+    $plugyChecks = @(Get-PlugyChecks $b $pe $t)
+    $fileCalls = Get-FileCalls $b $pe
+    $pathBuild = @(if ($fileCalls -and $fileCalls.Count -ge 4) { $fileCalls.Values | Sort-Object -Unique })
+    if ((($plugyChecks | ForEach-Object { $_.Form }) -join " ") -ne $PLUGY_FORMS -or
+        @($plugyChecks | Where-Object { $_.Len -eq 0 -or $_.Off }).Count -gt 0 -or -not (Test-KeptChecks $b $plugyChecks)) {
+        Fail "signature 7 (PD2's checks for PlugY around its material storage) not found as expected in ProjectDiablo.dll."
+    }
+    if ($pathBuild.Count -ne 1 -or -not (Test-FileChecks $b $pe $plugyChecks $fileCalls)) {
+        Fail "signature 8 (where PD2 saves its material storage) not found as expected in ProjectDiablo.dll."
+    }
+    $pathBuild = $pathBuild[0]
+    $flagVa = [int64](U32 $b ($t.Gate + 2))
+    Ok ("PlugY checks      {0} of PD2's: {1} for its material storage, {2} for its own stash pages" -f
+        $plugyChecks.Count, ($plugyChecks.Count - $PLUGY_KEEP.Count), $PLUGY_KEEP.Count)
+    Ok ("material files    {0} calls build their path (0x{1:X8})" -f $fileCalls.Count, $pathBuild)
+
+    # 14. ...and where PD2's panel draw decides whether to draw its stash page tabs
+    $tabs = Find-TabsDraw $b $pe
+    if (-not $tabs -or $tabs.Patched) { Fail "signature 9 (PD2's stash page tabs) not found in ProjectDiablo.dll." }
+    Ok ("stash page tabs   0x{0:X8} (PD2's P, I-IX along the top of the stash)" -f (OffToVa $pe $tabs.Site))
 }
 
 # ------------------------------------------------------------- the code ----
@@ -504,6 +703,10 @@ if ($gateStash) {
 # exactly as D2 would without PlugY. Clicks on items and the inventory still work.
 # A third (the draw gate) does the same for the item-draw call before PlugY's button
 # draw in step 1, so on those categories PlugY draws nothing under PD2's frame either.
+# Then the handler switches: D2 calls one instead of each D2 stash handler PD2 replaces
+# (left click, right click, ...); it runs D2's on the Stash category, PD2's otherwise.
+# Then the file switch, which gives PD2's material files their PlugY names, and last
+# the tabs check, which hides PD2's stash page tabs under PlugY.
 # Position-independent: PD2's module table is addressed relative to this code
 # (call $+5 / pop), D2Client through its runtime base, so it survives relocation.
 
@@ -603,6 +806,58 @@ if ($gateStash) {
         @{ B = @(0xC2,0x04,0x00); End = $true }                         # ret 4
     )
 }
+# The handler switches, called by D2 in place of a stash handler, with the message as the
+# one argument (on the stack, left as it is). Rows whose handlers are the same share one.
+if ($gateStash) {
+    $switches = @{}
+    foreach ($h in $handlers) {
+        $key = "{0:X}-{1:X}" -f $h.D2, $h.PD2
+        if (-not $switches.ContainsKey($key)) {
+            $n = $switches.Count; $switches[$key] = "msg$n"
+            $prog += @(
+                @{ B = @(0xE8,0,0,0,0); To = $isStashVa; Label = "msg$n" }          # call PD2's IsStashTab
+                @{ B = @(0x84,0xC0) }                                               # test al,al
+                @{ B = @(0x0F,0x84,0,0,0,0); ToLabel = "pd2msg$n" }                 # jz pd2msg
+                @{ B = @(0xB8) + (LE $h.D2) }                                       # mov eax, <D2's handler>
+                @{ B = @(0xE9,0,0,0,0); ToLabel = "d2msg"; End = $true }            # jmp d2msg
+                @{ B = @(0xE9,0,0,0,0); To = $h.PD2; Label = "pd2msg$n"; End = $true }   # jmp <PD2's handler>
+            )
+        }
+        $h.Label = $switches[$key]
+    }
+    $prog += @(
+        @{ B = @(0xE8,0,0,0,0, 0x59); Pic = $true; Label = "d2msg" }    # call $+5 / pop ecx
+        @{ B = @(0x8B,0x89,0,0,0,0); PicDisp = $true }                  # mov ecx,[ecx + (modtbl - here)]
+        @{ B = @(0x03,0xC1) }                                           # add eax,ecx
+        @{ B = @(0xFF,0xE0); End = $true }                              # jmp eax (D2's handler)
+    )
+}
+# The file switch, called instead of PD2's path builder where it builds the path of its
+# shared-stash and compendium files (the name is its one argument on the stack): under
+# PlugY it moves the name 4 characters on, past "pd2_", then goes on to the path builder.
+if ($gateStash) {
+    $prog += @(
+        @{ B = @(0xE8,0,0,0,0, 0x58); Pic = $true; Label = "files" }    # call $+5 / pop eax
+        @{ B = @(0x80,0xB8,0,0,0,0, 0x00); PicDisp = $true; PicAddr = $flagVa }   # cmp byte [eax + (PlugY flag - here)],0
+        @{ B = @(0x0F,0x84,0,0,0,0); ToLabel = "path" }                 # jz path
+        @{ B = @(0x83,0x44,0x24,0x04,0x04) }                            # add dword [esp+4],4 (the name, past "pd2_")
+        @{ B = @(0xE9,0,0,0,0); To = $pathBuild; Label = "path"; End = $true }   # jmp <PD2's path builder>
+    )
+}
+# The tabs check, called in place of the panel draw's "cmp dword [esp+24h],0", whose jne
+# then skips the tabs on nonzero: so set, or under PlugY. Leaves eax as it was; ret and
+# pop keep the flags.
+if ($gateStash) {
+    $prog += @(
+        @{ B = @(0x83,0x7C,0x24,0x28,0x00); Label = "tabs" }            # cmp dword [esp+28h],0 (its [esp+24h])
+        @{ B = @(0x0F,0x85,0,0,0,0); ToLabel = "tabsret" }              # jnz tabsret (skipped, as before)
+        @{ B = @(0x50) }                                                # push eax
+        @{ B = @(0xE8,0,0,0,0, 0x58); Pic = $true }                     # call $+5 / pop eax
+        @{ B = @(0x80,0xB8,0,0,0,0, 0x00); PicDisp = $true; PicAddr = $flagVa }   # cmp byte [eax + (PlugY flag - here)],0
+        @{ B = @(0x58) }                                                # pop eax
+        @{ B = @(0xC3); End = $true; Label = "tabsret" }                # ret
+    )
+}
 
 # code caves: runs of int3 padding inside the mapped part of .text
 $text = $pe.Sections | Where-Object { $_.Name -eq ".text" }
@@ -614,7 +869,7 @@ $endRaw = $text.RawPtr + [Math]::Min($text.RawSize, $text.VSize)
 for ($i = $text.RawPtr; $i -lt $endRaw; $i++) {
     if ($b[$i] -eq 0xCC) { if ($run -eq 0) { $start = $i }; $run++ }
     else {
-        if ($run -ge $MIN_CAVE) { [void]$caves.Add(@{ Off = $start; Len = $run }); if ($caves.Count -ge 64) { break } }
+        if ($run -ge $MIN_CAVE) { [void]$caves.Add(@{ Off = $start; Len = $run }); if ($caves.Count -ge 128) { break } }
         $run = 0
     }
 }
@@ -658,7 +913,10 @@ for ($k = 0; $k -lt $prog.Count; $k++) {
     $bytes = [byte[]]$ins.B
     $len = $bytes.Length
     if ($ins.Pic)     { $picBase = $va + 5 }                                         # eax after pop
-    if ($ins.PicDisp) { [Array]::Copy([BitConverter]::GetBytes([int32]($t.ModTbl - $picBase)), 0, $bytes, 2, 4) }
+    if ($ins.PicDisp) {                                                             # the module table, or PicAddr
+        $pa = if ($ins.PicAddr) { $ins.PicAddr } else { $t.ModTbl }
+        [Array]::Copy([BitConverter]::GetBytes([int32]($pa - $picBase)), 0, $bytes, 2, 4)
+    }
     if ($ins.To)      { [Array]::Copy((Rel32 ($va + $len) $ins.To), 0, $bytes, $len - 4, 4) }
     if ($ins.ToLabel) { [Array]::Copy((Rel32 ($va + $len) (VaOf $labels[$ins.ToLabel])), 0, $bytes, $len - 4, 4) }
     Emit $off $bytes
@@ -699,10 +957,32 @@ if ($gateStash) {
         Ok ("{0}  D2Client+0x{1:X} -> 0x{2:X8} (PlugY's buttons on the Stash category only)" -f $g[2], $g[1], $gva)
         $endSlot += 20
     }
+    # PD2's stash handler records, each with its switch as the handler
+    foreach ($h in $handlers) {
+        $rec = [byte[]]$b[$h.Rec..($h.Rec + 19)]
+        [Array]::Copy((LE (VaOf $labels[$h.Label])), 0, $rec, 8, 4)
+        Emit $endSlot $rec
+        $endSlot += 20
+    }
+    Ok ("stash handlers    {0} switched -> 0x{1:X8}.. (PD2's on the categories, D2's and PlugY's on Stash)" -f $handlers.Count, (VaOf $labels["msg0"]))
+    # PD2's material storage on under PlugY: its checks' jumps become nops...
+    for ($i = 0; $i -lt $plugyChecks.Count; $i++) {
+        if ($i -notin $PLUGY_KEEP) { Emit $plugyChecks[$i].Jne ([byte[]](@(0x90) * $plugyChecks[$i].Len)) }
+    }
+    Ok ("PlugY checks      {0} jumps -> nops (PD2's material storage on under PlugY; its stash pages stay PlugY's)" -f
+        ($plugyChecks.Count - $PLUGY_KEEP.Count))
+    # ...and its files get their PlugY names, through the file switch
+    $fva = VaOf $labels["files"]
+    foreach ($k in $fileCalls.Keys) { Emit ($k + 1) (Rel32 ((VaOf $k) + 5) $fva) }
+    Ok ("material files    {0} calls -> 0x{1:X8} (under PlugY: Save\shared.stash, shared.compendium, hc_...)" -f $fileCalls.Count, $fva)
+    # ...and PD2's stash page tabs are hidden under PlugY, through the tabs check
+    $tva = VaOf $labels["tabs"]
+    Emit $tabs.Site ([byte[]](@(0xE8) + (Rel32 ((VaOf $tabs.Site) + 5) $tva)))
+    Ok ("stash page tabs   0x{0:X8} -> 0x{1:X8} (PD2's P, I-IX hidden under PlugY)" -f (VaOf $tabs.Site), $tva)
 }
 Emit $endSlot ([BitConverter]::GetBytes([uint32]0x1B))
 if ($keep -eq $S13_PANEL) { Ok ("hook table ends after entry {0} - the {1} hooks tested on Season 13" -f $keep, ($keep + 1)) }
-else { Ok ("hook table ends after entry {0} - Season 13's hooks minus the call PlugY hooks (0x4437C), then the stash gates" -f ($keep + 2)) }
+else { Ok ("hook table ends after entry {0} - Season 13's hooks minus the call PlugY hooks (0x4437C), then the stash gates and switches" -f (($endSlot - $t.TableOff) / 20 - 1)) }
 
 [System.IO.File]::WriteAllBytes($dll, $b)
 
@@ -734,7 +1014,11 @@ Write-Host "  PlugY.ini Param= must include  -plugy   (testing mode: Launch-PD2-
 Write-Host ""
 Write-Host "  Hover an item - you should see green [min - max] ranges, Max Sockets"
 Write-Host "  and the upgrade recipe. PlugY's stash page buttons now draw on top."
-if ($gateStash) { Write-Host "  (Only on PD2's Stash category - not on Gems, Runes and the others.)" }
+if ($gateStash) {
+    Write-Host "  (Only on PD2's Stash category - not on Gems, Runes and the others,"
+    Write-Host "  which are PD2's own again: put gems, runes, ... in there. With PlugY,"
+    Write-Host "  PD2 keeps them in Save\shared.stash, not in its pd2_shared.stash.)"
+}
 Write-Host ""
 Write-Host "  Re-run this after every PD2 update (the launcher restores the DLL)."
 Write-Host ""
