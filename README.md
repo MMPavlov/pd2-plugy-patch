@@ -218,8 +218,8 @@ which silently removes the patch — the stat ranges just disappear again.
 You don't need a new version of the patch for each PD2 update. It doesn't use fixed
 addresses — it finds the code to change by searching for byte patterns, so it adapts
 to new builds automatically. (Tested on both Season 13 builds, `579987ED` and
-`538A77B7` — the `s13p2m2` mirror installs `538A77B7` — and on three Season 14 builds:
-open beta, launch and the first hotfix, plus the
+`538A77B7` — the `s13p2m2` mirror installs `538A77B7` — and on five Season 14 builds:
+open beta, launch, the first hotfix (Patch #1), Patch #2 and Patch #2 maint1, plus the
 [Single Player Plus](https://github.com/Lukaszpg/PD2-Single-Player-Plus-mod) mod's
 14.0.1 DLL, which is the launch build with the mod's own changes.) Running it on an
 already-patched DLL is harmless; it just says `ALREADY PATCHED`.
@@ -515,7 +515,7 @@ Everything is located by signature at run time:
 | stash click site | `mov eax,ebx / call` at `D2Client.dll` RVA `0x9B885`, then `je` to `mov edi,ebx / call` at `0x9B8A3` (PlugY's mouse-down check), checked (Season 14) |
 | stash draw site | `push eax / mov byte [flag],4 / call / mov [flag],bl` at `D2Client.dll` RVA `0x99A42`, right before the stash-button call, checked (Season 14) |
 | PD2's stash handlers | PD2's records after its panel record that write a handler field of D2Client's stash message table (`+0xDBDB8`); D2's handler read from that row; the left click must be among them (Season 14) |
-| PD2's checks for PlugY | every `cmp byte [flag], 0/al/dl/bl` + `jne` on the gate's flag in `.text`: 18, of the same forms in the same order on every Season 14 build; the 4 kept are recognised by what follows them (Season 14) |
+| PD2's checks for PlugY | every `cmp byte [flag], 0/al/dl/bl` + `jne` on the gate's flag in `.text`, with at most one `mov` to or from `[ebp+d8]`/`[esp+d8]` between them: 18, of the same forms in the same order on every Season 14 build; the 4 kept are recognised by what follows them (Season 14) |
 | material files | `mov reg, <"pd2_[hc_]shared.stash" / ".compendium">`, then the next call into `.text`: 7, all to one path builder, which the save and load checks lead to (Season 14) |
 | stash page tabs | `cmp [esp+20h],0 / mov [esp+10h],edi / jne X / cmp [esp+24h],0 / jne X / mov eax,[img] / … / push <"…\panel\stashtabs">`, once (Season 14) |
 | code caves | runs of `0xCC` at least as long as the longest instruction + a 5-byte jump, in the mapped part of `.text` |

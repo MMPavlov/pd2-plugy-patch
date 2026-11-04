@@ -1,5 +1,5 @@
 <#
-    Patch-PD2-PlugY.ps1   v6.0.0   (version-independent)
+    Patch-PD2-PlugY.ps1   v6.0.1   (version-independent)
 
     Restores Project Diablo 2's augmented item descriptions (green [min - max]
     stat ranges, Max Sockets, Base Speed, upgrade recipe) when launching through
@@ -35,7 +35,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "6.0.0"   # bump on every change - see CHANGELOG.md
+$VERSION = "6.0.1"   # bump on every change - see CHANGELOG.md
 
 # Keep the window open at the end so the result can actually be read.
 # (Right-click > "Run with PowerShell" otherwise closes it instantly.)
@@ -319,9 +319,12 @@ $MSG_NAMES = @{ "0-200" = "mouse move"; "0-201" = "left click"; "0-202" = "left 
 # into their names under PlugY (Save\shared.stash, shared.compendium, hc_...), so PD2's
 # own files and the items in them are never touched. PD2's checks around its own stash
 # pages stay as they are: PlugY's pages are the Stash category's.
-# The checks: cmp byte [flag],0|al|dl|bl / jne (once, mov [ebp-18h],eax in between), in
-# .text order; on every Season 14 build the same 18, of these forms. On the ones marked
-# "-" PD2 handles its own stash pages (switching them, putting items on them, ...).
+# The checks: cmp byte [flag],0|al|dl|bl / jne, in .text order; on every Season 14 build
+# the same 18, of these forms. The compiler can put one mov to or from the stack between
+# the cmp and its jne (mov [ebp-18h],eax; from Patch #2, mov eax,[esp+0Ch] in the 14th);
+# such a check's letter is upper case, and the forms are compared ignoring case.
+# On the checks in $PLUGY_KEEP PD2 handles its own stash pages (switching them, putting
+# items on them, ...).
 $PLUGY_FORMS = "c c b b c C c c d c c c c c c c a a"
 $PLUGY_KEEP  = @(2, 7, 10, 11)
 function Get-PlugyChecks([byte[]]$a, $p, $tt) {
@@ -333,7 +336,10 @@ function Get-PlugyChecks([byte[]]$a, $p, $tt) {
         if ($a[$s] -eq 0x80 -and $a[$s + 1] -eq 0x3D -and $a[$at + 4] -eq 0 -and $s -ne $tt.Gate) { $form = "c"; $j = $s + 7 }
         elseif ($a[$s] -eq 0x38 -and $a[$s + 1] -in 0x05, 0x15, 0x1D) { $form = @{ 0x05 = "a"; 0x15 = "d"; 0x1D = "b" }[[int]$a[$s + 1]]; $j = $s + 6 }
         if ($form) {
-            if ($a[$j] -eq 0x89 -and $a[$j + 1] -eq 0x45) { $j += 3; $form = $form.ToUpper() }
+            # mov [ebp+d8],r / mov r,[ebp+d8] (3 bytes), mov [esp+d8],r / mov r,[esp+d8] (4 bytes):
+            # it leaves the flags as the cmp set them
+            if (($a[$j] -in 0x89, 0x8B) -and ($a[$j + 1] -band 0xC7) -eq 0x45) { $j += 3; $form = $form.ToUpper() }
+            elseif (($a[$j] -in 0x89, 0x8B) -and ($a[$j + 1] -band 0xC7) -eq 0x44 -and $a[$j + 2] -eq 0x24) { $j += 4; $form = $form.ToUpper() }
             $len = if ($a[$j] -eq 0x75 -or ($a[$j] -eq 0x90 -and $a[$j + 1] -eq 0x90 -and $a[$j + 2] -ne 0x90)) { 2 }
                    elseif (($a[$j] -eq 0x0F -and $a[$j + 1] -eq 0x85) -or ($a[$j] -eq 0x90 -and $a[$j + 5] -eq 0x90)) { 6 } else { 0 }
             $sites += [PSCustomObject]@{ Cmp = $s; Form = $form; Jne = $j; Len = $len; Off = ($a[$j] -eq 0x90) }
@@ -669,7 +675,7 @@ if ($gateStash) {
     $plugyChecks = @(Get-PlugyChecks $b $pe $t)
     $fileCalls = Get-FileCalls $b $pe
     $pathBuild = @(if ($fileCalls -and $fileCalls.Count -ge 4) { $fileCalls.Values | Sort-Object -Unique })
-    if ((($plugyChecks | ForEach-Object { $_.Form }) -join " ") -ne $PLUGY_FORMS -or
+    if ((($plugyChecks | ForEach-Object { $_.Form }) -join " ") -ine $PLUGY_FORMS -or
         @($plugyChecks | Where-Object { $_.Len -eq 0 -or $_.Off }).Count -gt 0 -or -not (Test-KeptChecks $b $plugyChecks)) {
         Fail "signature 7 (PD2's checks for PlugY around its material storage) not found as expected in ProjectDiablo.dll."
     }

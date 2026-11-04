@@ -6,6 +6,33 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 6.0.1 — 2026-11-04
+
+Fix only. What's written into `ProjectDiablo.dll` on the builds 6.0.0 supports is
+byte-identical to 6.0.0, so a DLL 6.0.0 patched stays `ALREADY PATCHED`.
+
+### Fixed
+- **Season 14 Patch #2 (1 Nov) and Patch #2 maint1 (4 Nov UTC): `FAILED: signature 7`.**
+  PD2's 14th check for PlugY (one of the 14 around its material storage) was compiled
+  with a `mov eax,[esp+0Ch]` between the `cmp` and its `jne`. The scan for the checks
+  stepped over only one `mov` there: `mov [ebp-18h],eax`, on the 6th check. It now steps over
+  one `mov` to or from `[ebp+d8]` or `[esp+d8]` in any check (neither changes the
+  flags). The rest of the 18 checks, and everything else, are found as on the hotfix.
+  On these builds the `mov` stays and only the `jne` becomes nops, as on the others.
+- Launcher reports 6.0.1 too (no functional change).
+
+### Checked
+- 204 offline checks: 6.0.0's suite plus Patch #2 and Patch #2 maint1, the two
+  builds taken from the Khazra89 mirror (`S14P2`, `S14P2M1`):
+  - On both: fresh patch, re-run, restore, upgrades from 3.1.0, 4.0.0, 5.0.0 and the
+    test builds, the independent verifier and the emulator (also relocated).
+    6.0.0 refuses both with signature 7 and leaves them untouched (the reported error).
+  - On every earlier build: byte-identical to 6.0.0, and a 6.0.0-patched DLL is
+    `ALREADY PATCHED`.
+  - Patch #2 maint1 with an unknown instruction between a check's `cmp` and `jne` is
+    refused with signature 7.
+- Not tried in game on Patch #2 or maint1.
+
 ## 6.0.0 — 2026-10-28
 
 Major version: what's written into `ProjectDiablo.dll` on Season 14 changed. Season 13
