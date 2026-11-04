@@ -228,6 +228,11 @@ already-patched DLL is harmless; it just says `ALREADY PATCHED`.
 season changes the PD2 hooks this patch relies on, it stops with *this version of PD2
 isn't supported yet* and changes nothing.
 
+**With the Single Player Plus mod**, the update also replaces the mod's files with PD2's
+own, and characters holding the mod's own items stop loading (*generic bad file*, see
+[Troubleshooting](#troubleshooting)). Put the mod back before you play, then run
+`Run-Patch.bat` and `Run-SPPlus-Patch.bat`.
+
 **On the Season 13 rollback** there shouldn't be any updates: don't open the PD2
 launcher. If it updated you anyway, redo the rollback (Season 13 setup, step 2), then
 run `Run-Patch.bat`.
@@ -314,6 +319,24 @@ The DLL is fine — the problem is how the game is launched:
 **Every stash page button goes to the next page** (Season 14)
 That's what versions before 4.0.0 do on Season 14. Run `Run-Patch.bat` from 4.0.0 or
 newer; it upgrades the DLL.
+
+**`Unable to enter game, generic bad file`** (Single Player Plus mod, after a PD2 update)
+The PD2 launcher's update replaced the mod's `ProjectDiablo.dll`, `BH.dll` and
+`pd2data.mpq` with PD2's own. Plain PD2 doesn't have the mod's own items (Orb of
+Extraction; Exalted, Mythic and Divine Orbs; Eternal Coin; Charsi's and Gheed's Curious
+Boxes; Uncut Pristine Jewel). So it can't load a character who holds one in their
+inventory or stash. If one is on a PlugY shared stash page, no character loads, because
+they all load that page. The game's log (`ProjectD2\D2yymmdd.txt`, e.g. `D2261104.txt`)
+says `Error Loading:<character>`. The saves themselves are fine:
+1. Close the game and the PD2 launcher.
+2. Put the mod's three files back, from
+   [its release](https://github.com/Lukaszpg/PD2-Single-Player-Plus-mod/releases) or with
+   its own launcher.
+3. Run `Run-Patch.bat`, then `Run-SPPlus-Patch.bat`.
+4. **Testing mode** only: if you tried to enter a game in between, the game recompiled the
+   `.bin` files in `ProjectD2\data\global\excel` from PD2's data. Move those `.bin` files
+   out of that folder (the `….stock-backup` files can stay), and it rebuilds them from
+   the mod's data the next time you enter a game.
 
 **`FAILED: signature ... not found`**
 PD2 changed its code enough that the patterns no longer match. Nothing was written,
