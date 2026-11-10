@@ -1,5 +1,5 @@
 <#
-    Patch-SPPlus.ps1   v1.0.1   (version-independent)
+    Patch-SPPlus.ps1   v1.1.0   (version-independent)
 
     Fixes the "(old)" runes and gems of the PD2 Single Player Plus mod on Season 14.
 
@@ -7,22 +7,26 @@
     the stackable one, and the Season 13 stacks (r01s, gpws, ...) are kept only as
     "El Rune (old)", "Perfect Diamond (old)", ... - they don't stack with the new ones,
     don't go into the stash's Runes / Gems tabs and don't socket. The Single Player
-    Plus mod's pd2data.mpq (v14.0.1) still drops and makes those old items:
+    Plus mod's pd2data.mpq (v14.0.1, v14.0.2) still drops and makes those old items:
       - monsters drop old runes (its Runes 1-17 treasure classes),
-      - the rune downgrade recipes and the gem boxes give old runes and gems,
-      - the crafting infusions, the higher rune downgrades and the rainbow facets
-        ask for old runes and gems, so new ones don't work in them.
+      - the rune downgrade recipes give old runes (in 14.0.1 the gem boxes give old
+        gems too),
+      - the crafting infusions and the higher rune downgrades ask for old runes and
+        gems (in 14.0.1 the rainbow facets too), so new ones don't work in them.
     This rewrites those to the Season 14 items, in the mod's TreasureClassEx and
     CubeMain (both the .txt and the compiled .bin the game loads). Testing mode
     (-direct -txt) writes compiled copies to data\global\excel and reads those
     instead; copies that are the mod's original get the same fix. Recipes that ask
     for old items and already have a Season 14 twin are left as they are, so old
-    runes you already have can still go down into new ones there. Nothing else in
-    the mod changes.
+    runes you already have can still go down into new ones there. So are recipes
+    that turn an old item into its Season 14 item (14.0.2 has them for the old
+    perfect gems). Nothing else in the mod changes.
 
     Which items are "old" is read from the mod's own data (PD2's names that end in
     "(old)"), and every compiled record is checked against its .txt row first. If
-    anything doesn't match, it stops and changes nothing.
+    anything doesn't match, it stops and changes nothing. A compiled table may have
+    records after the last .txt row (14.0.2's cubemain.bin has 10 recipes that its
+    CubeMain.txt doesn't); those get the fix in the compiled table only.
 
     SINGLE PLAYER ONLY. Not related to PlugY - works with or without it.
 
@@ -40,7 +44,7 @@ param([string]$Path, [switch]$Restore, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "1.0.1"   # bump on every change - see CHANGELOG-SPPlus.md
+$VERSION = "1.1.0"   # bump on every change - see CHANGELOG-SPPlus.md
 
 # Keep the window open at the end so the result can actually be read.
 function Stop-Here([int]$code) {
@@ -436,15 +440,12 @@ function Swap-Code([string]$f, [string]$from, [string]$to) {
     [regex]::Replace($f, '^(\s*"?\s*)' + [regex]::Escape($from) + '(?=\s*(,|"|$))', '${1}' + $to)
 }
 
-# Everything this fixes in one copy of pd2data.mpq. Returns the changed files and counts.
-function Get-Fix([byte[]]$data, [string]$label) {
-    $m = [SpPlus.Mpq]::new($data)
-    foreach ($need in @($TC_BIN, $TC_TXT, $CM_BIN, $CM_TXT, $TBL, ($EXCEL + "weapons.bin"), ($EXCEL + "armor.bin"), ($EXCEL + "misc.bin"))) {
-        if (-not $m.Has($need)) { Fail "$label has no $need - this isn't PD2's data archive." }
-    }
+function Mismatch([string]$m) { [PSCustomObject]@{ Error = $m } }
 
-    # item codes, in the order item indexes count them: weapons, armor, misc
-    # (item codes are case-sensitive, so no PowerShell hashtables for them)
+# Item codes in the order item indexes count them (weapons, armor, misc), and the old
+# items: PD2 names them "... (old)"; each is its Season 14 item's code + "s".
+# (item codes are case-sensitive, so no PowerShell hashtables for them)
+function Get-Items($m) {
     $codes = New-Object System.Collections.Generic.List[string]
     foreach ($n in "weapons", "armor", "misc") {
         $bin = $m.Read($EXCEL + "$n.bin")
@@ -454,7 +455,6 @@ function Get-Fix([byte[]]$data, [string]$label) {
     $index = New-Object 'System.Collections.Generic.Dictionary[string,int]'
     for ($i = 0; $i -lt $codes.Count; $i++) { if (-not $index.ContainsKey($codes[$i])) { $index[$codes[$i]] = $i } }
 
-    # the old items: PD2 names them "... (old)"; each is its Season 14 item's code + "s"
     $names = [SpPlus.Mpq]::ReadTbl($m.Read($TBL))
     $newOf = New-Object 'System.Collections.Generic.Dictionary[string,string]'
     $newIdx = New-Object 'System.Collections.Generic.Dictionary[int,int]'
@@ -465,64 +465,90 @@ function Get-Fix([byte[]]$data, [string]$label) {
             $newIdx[$index[$c]] = $index[$c.Substring(0, 3)]
         }
     }
+    [PSCustomObject]@{ Codes = $codes; Index = $index; NewOf = $newOf; NewIdx = $newIdx }
+}
 
-    # ---- TreasureClassEx: Item1-10 are 64-byte strings
-    $tcb = $m.Read($TC_BIN); $tct = Read-Txt $m.Read($TC_TXT) "TreasureClassEx.txt"
+# The two Repair functions swap the old items for their Season 14 items in a compiled
+# table and in its text, both in place. Every record is first checked against its text
+# row. The table may have records after the text's last row (it was compiled from a
+# longer text); those are changed in the table only. They return the counts, or
+# .Error = what doesn't match (then the table and the text are not to be used).
+
+# TreasureClassEx: Item1-10 are 64-byte strings.
+function Repair-Tc([byte[]]$tcb, $tct, $items) {
+    $newOf = $items.NewOf
     $tcN = [int](U32 $tcb 0)
     $tcRec = if ($tcN -gt 0) { [int][math]::Floor(($tcb.Length - 4) / $tcN) } else { 0 }
     if ($tcN -eq 0 -or $tcb.Length -ne 4 + $tcN * $tcRec -or $tcRec -lt $TC_ITEM + $TC_ITEMS * $TC_ITEM_LEN) {
-        Fail "treasureclassex.bin doesn't have the expected layout."
+        return (Mismatch "treasureclassex.bin doesn't have the expected layout.")
     }
-    if ($tct.Rows.Count -ne $tcN) { Fail "TreasureClassEx.txt has $($tct.Rows.Count) rows but treasureclassex.bin $tcN - they don't match." }
+    $txtRows = $tct.Rows.Count
+    if ($txtRows -gt $tcN) { return (Mismatch "TreasureClassEx.txt has $txtRows rows but treasureclassex.bin only $tcN - they don't match.") }
     $itemCols = 1..$TC_ITEMS | ForEach-Object { Get-Col $tct "Item$_" }
-    $tcFix = 0
+    $tcFix = 0; $txtFix = 0
     for ($r = 0; $r -lt $tcN; $r++) {
-        $f = Get-Fields $tct $r; $changed = $false
+        $f = $null; if ($r -lt $txtRows) { $f = Get-Fields $tct $r }
+        $changed = $false
         for ($k = 0; $k -lt $TC_ITEMS; $k++) {
             $o = 4 + $r * $tcRec + $TC_ITEM + $k * $TC_ITEM_LEN
             $inBin = [SpPlus.Mpq]::CStr($tcb, $o, $TC_ITEM_LEN)
-            $inTxt = if ($itemCols[$k] -lt $f.Length) { $f[$itemCols[$k]] } else { "" }
-            if ($inBin -cne $inTxt) { Fail "treasureclassex.bin row $r Item$($k + 1) is '$inBin' but the .txt says '$inTxt' - they don't match." }
+            if ($r -lt $txtRows) {
+                $inTxt = if ($itemCols[$k] -lt $f.Length) { $f[$itemCols[$k]] } else { "" }
+                if ($inBin -cne $inTxt) { return (Mismatch "treasureclassex.bin row $r Item$($k + 1) is '$inBin' but the .txt says '$inTxt' - they don't match.") }
+            }
             if ($newOf.ContainsKey($inBin)) {
                 $new = [byte[]]::new($TC_ITEM_LEN)
                 $LATIN1.GetBytes($newOf[$inBin]).CopyTo($new, 0)
                 [Array]::Copy($new, 0, $tcb, $o, $TC_ITEM_LEN)
-                $f[$itemCols[$k]] = Swap-Code $f[$itemCols[$k]] $inBin $newOf[$inBin]
-                $changed = $true; $tcFix++
+                if ($r -lt $txtRows) {
+                    $f[$itemCols[$k]] = Swap-Code $f[$itemCols[$k]] $inBin $newOf[$inBin]
+                    $changed = $true; $txtFix++
+                }
+                $tcFix++
             }
         }
         if ($changed) { Set-Fields $tct $r $f }
     }
+    [PSCustomObject]@{ Error = $null; Changes = $tcFix; TxtChanges = $txtFix; Extra = $tcN - $txtRows }
+}
 
-    # ---- CubeMain: inputs {WORD flags, WORD item, ...} (flag 1 = that exact item),
-    #      outputs {BYTE, BYTE, WORD item, ...}
-    $cmb = $m.Read($CM_BIN); $cmt = Read-Txt $m.Read($CM_TXT) "CubeMain.txt"
-    $cmN = [int](Get-RecCount $cmb $CM_REC "cubemain.bin")
-    if ($cmt.Rows.Count -ne $cmN) { Fail "CubeMain.txt has $($cmt.Rows.Count) rows but cubemain.bin $cmN - they don't match." }
+# CubeMain: inputs {WORD flags, WORD item, ...} (flag 1 = that exact item),
+#           outputs {BYTE, BYTE, WORD item, ...}
+function Repair-Cube([byte[]]$cmb, $cmt, $items) {
+    $codes = $items.Codes; $index = $items.Index; $newOf = $items.NewOf; $newIdx = $items.NewIdx
+    $cmN = [int](U32 $cmb 0)
+    if ($cmb.Length -ne 4 + $cmN * $CM_REC) { return (Mismatch "cubemain.bin doesn't have the expected layout ($($cmb.Length) bytes for $cmN records).") }
+    $txtRows = $cmt.Rows.Count
+    if ($txtRows -gt $cmN) { return (Mismatch "CubeMain.txt has $txtRows rows but cubemain.bin only $cmN - they don't match.") }
     $inCols  = 1..$CM_INS | ForEach-Object { Get-Col $cmt "input $_" }
     $outCols = $CM_TXT_OUT | ForEach-Object { Get-Col $cmt $_ }
 
     # each record's old-item slots, checked against its .txt row
     $oldIn = @{}; $oldOut = @{}
     for ($r = 0; $r -lt $cmN; $r++) {
-        $f = Get-Fields $cmt $r; $base = 4 + $r * $CM_REC
+        $f = $null; if ($r -lt $txtRows) { $f = Get-Fields $cmt $r }
+        $base = 4 + $r * $CM_REC
         for ($k = 0; $k -lt $CM_INS; $k++) {
             $o = $base + $CM_IN + $k * 8; $it = [int](U16 $cmb ($o + 2))
             $binOld = ((U16 $cmb $o) -band 1) -and $newIdx.ContainsKey($it)
-            $txt = if ($inCols[$k] -lt $f.Length) { CodeOf $f[$inCols[$k]] } else { "" }
-            if ($binOld -ne $newOf.ContainsKey($txt) -or ($binOld -and $codes[$it] -cne $txt)) {
-                Fail "cubemain.bin row $r input $($k + 1) doesn't match the .txt ('$txt')."
+            if ($r -lt $txtRows) {
+                $txt = if ($inCols[$k] -lt $f.Length) { CodeOf $f[$inCols[$k]] } else { "" }
+                if ($binOld -ne $newOf.ContainsKey($txt) -or ($binOld -and $codes[$it] -cne $txt)) {
+                    return (Mismatch "cubemain.bin row $r input $($k + 1) doesn't match the .txt ('$txt').")
+                }
             }
-            if ($binOld) { $oldIn["$r/$k"] = $txt }
+            if ($binOld) { $oldIn["$r/$k"] = $codes[$it] }
         }
         for ($k = 0; $k -lt $CM_OUTS; $k++) {
             $o = $base + $CM_OUT + $k * $CM_OUT_LEN + 2; $it = [int](U16 $cmb $o)
             $binOld = $newIdx.ContainsKey($it)
-            $txt = if ($outCols[$k] -lt $f.Length) { CodeOf $f[$outCols[$k]] } else { "" }
-            if ($binOld -ne $newOf.ContainsKey($txt) -or ($binOld -and $codes[$it] -cne $txt)) {
-                Fail "cubemain.bin row $r $($CM_TXT_OUT[$k]) doesn't match the .txt ('$txt')."
+            if ($r -lt $txtRows) {
+                $txt = if ($outCols[$k] -lt $f.Length) { CodeOf $f[$outCols[$k]] } else { "" }
+                if ($binOld -ne $newOf.ContainsKey($txt) -or ($binOld -and $codes[$it] -cne $txt)) {
+                    return (Mismatch "cubemain.bin row $r $($CM_TXT_OUT[$k]) doesn't match the .txt ('$txt').")
+                }
             }
-            if ($binOld) { $oldOut["$r/$k"] = $txt }
+            if ($binOld) { $oldOut["$r/$k"] = $codes[$it] }
         }
     }
 
@@ -546,20 +572,37 @@ function Get-Fix([byte[]]$data, [string]$label) {
         if (-not $hasOldIn.ContainsKey($r)) { [void]$s14.Add([Convert]::ToBase64String((Get-Swapped $r))) }
     }
 
-    # outputs: always the Season 14 item. Inputs: the Season 14 item, unless that recipe
-    # already exists for Season 14 items - then this one stays for the old items.
-    $cmOut = 0; $cmIn = 0; $cmKept = 0; $rows = @{}
-    foreach ($key in $oldOut.Keys) { $rows[[int]$key.Split('/')[0]] = $true }
-    foreach ($r in $hasOldIn.Keys) { $rows[$r] = $true }
-    foreach ($r in $rows.Keys) {
-        $base = 4 + $r * $CM_REC; $f = Get-Fields $cmt $r
-        $keepIn = $hasOldIn.ContainsKey($r) -and $s14.Contains([Convert]::ToBase64String((Get-Swapped $r)))
-        if ($keepIn) { $cmKept++ }
+    # outputs: always the Season 14 item. Inputs: the Season 14 item, unless
+    #  - that recipe already exists for Season 14 items: then this one stays for the old
+    #    items, or
+    #  - the recipe turns an old item into its Season 14 item (one of its results is an
+    #    old ingredient's new item): swapping would leave "new item -> the same item".
+    $cmOut = 0; $cmIn = 0; $cmKept = 0; $cmConv = 0; $txtFix = 0; $touch = @{}
+    foreach ($key in $oldOut.Keys) { $touch[[int]$key.Split('/')[0]] = $true }
+    foreach ($r in $hasOldIn.Keys) { $touch[$r] = $true }
+    foreach ($r in $touch.Keys) {
+        $base = 4 + $r * $CM_REC
+        $f = $null; if ($r -lt $txtRows) { $f = Get-Fields $cmt $r }
+        $keepIn = $false
+        if ($hasOldIn.ContainsKey($r)) {
+            $sw = Get-Swapped $r
+            if ($s14.Contains([Convert]::ToBase64String($sw))) { $keepIn = $true; $cmKept++ }
+            else {
+                for ($k = 0; $k -lt $CM_INS -and -not $keepIn; $k++) {
+                    if (-not $oldIn.ContainsKey("$r/$k")) { continue }
+                    $want = [int](U16 $sw ($CM_IN + $k * 8 + 2))
+                    for ($j = 0; $j -lt $CM_OUTS; $j++) {
+                        if ([int](U16 $sw ($CM_OUT + $j * $CM_OUT_LEN + 2)) -eq $want) { $keepIn = $true }
+                    }
+                }
+                if ($keepIn) { $cmConv++ }
+            }
+        }
         for ($k = 0; $k -lt $CM_OUTS; $k++) {
             if (-not $oldOut.ContainsKey("$r/$k")) { continue }
             $o = $base + $CM_OUT + $k * $CM_OUT_LEN + 2; $old = $oldOut["$r/$k"]
             Put16 $cmb $o $index[$newOf[$old]]
-            $f[$outCols[$k]] = Swap-Code $f[$outCols[$k]] $old $newOf[$old]
+            if ($r -lt $txtRows) { $f[$outCols[$k]] = Swap-Code $f[$outCols[$k]] $old $newOf[$old]; $txtFix++ }
             $cmOut++
         }
         if (-not $keepIn) {
@@ -567,24 +610,47 @@ function Get-Fix([byte[]]$data, [string]$label) {
                 if (-not $oldIn.ContainsKey("$r/$k")) { continue }
                 $o = $base + $CM_IN + $k * 8 + 2; $old = $oldIn["$r/$k"]
                 Put16 $cmb $o $index[$newOf[$old]]
-                $f[$inCols[$k]] = Swap-Code $f[$inCols[$k]] $old $newOf[$old]
+                if ($r -lt $txtRows) { $f[$inCols[$k]] = Swap-Code $f[$inCols[$k]] $old $newOf[$old]; $txtFix++ }
                 $cmIn++
             }
         }
-        Set-Fields $cmt $r $f
-    }
-
-    $files = New-Object System.Collections.Specialized.OrderedDictionary ([StringComparer]::OrdinalIgnoreCase)
-    if ($tcFix -gt 0) {
-        $files[$TC_BIN] = $tcb; $files[$TC_TXT] = $LATIN1.GetBytes($tct.Lines -join "`n")
-    }
-    if ($cmOut + $cmIn -gt 0) {
-        $files[$CM_BIN] = $cmb; $files[$CM_TXT] = $LATIN1.GetBytes($cmt.Lines -join "`n")
+        if ($r -lt $txtRows) { Set-Fields $cmt $r $f }
     }
     [PSCustomObject]@{
-        Mpq = $m; Files = $files; OldItems = $newOf.Count
-        Runes = @($newOf.Keys | Where-Object { $_ -match '^r\d\ds$' }).Count
-        Tc = $tcFix; CubeOut = $cmOut; CubeIn = $cmIn; CubeKept = $cmKept
+        Error = $null; Changes = $cmOut + $cmIn; TxtChanges = $txtFix; Extra = $cmN - $txtRows
+        Out = $cmOut; In = $cmIn; Kept = $cmKept; Conv = $cmConv
+    }
+}
+
+# Everything this fixes in one copy of pd2data.mpq. Returns the changed files and counts.
+function Get-Fix([byte[]]$data, [string]$label) {
+    $m = [SpPlus.Mpq]::new($data)
+    foreach ($need in @($TC_BIN, $TC_TXT, $CM_BIN, $CM_TXT, $TBL, ($EXCEL + "weapons.bin"), ($EXCEL + "armor.bin"), ($EXCEL + "misc.bin"))) {
+        if (-not $m.Has($need)) { Fail "$label has no $need - this isn't PD2's data archive." }
+    }
+    $items = Get-Items $m
+
+    $tcb = $m.Read($TC_BIN); $tct = Read-Txt $m.Read($TC_TXT) "TreasureClassEx.txt"
+    $tc = Repair-Tc $tcb $tct $items
+    if ($tc.Error) { Fail $tc.Error }
+    $cmb = $m.Read($CM_BIN); $cmt = Read-Txt $m.Read($CM_TXT) "CubeMain.txt"
+    $cm = Repair-Cube $cmb $cmt $items
+    if ($cm.Error) { Fail $cm.Error }
+
+    $files = New-Object System.Collections.Specialized.OrderedDictionary ([StringComparer]::OrdinalIgnoreCase)
+    if ($tc.Changes -gt 0) {
+        $files[$TC_BIN] = $tcb
+        if ($tc.TxtChanges -gt 0) { $files[$TC_TXT] = $LATIN1.GetBytes($tct.Lines -join "`n") }
+    }
+    if ($cm.Changes -gt 0) {
+        $files[$CM_BIN] = $cmb
+        if ($cm.TxtChanges -gt 0) { $files[$CM_TXT] = $LATIN1.GetBytes($cmt.Lines -join "`n") }
+    }
+    [PSCustomObject]@{
+        Mpq = $m; Files = $files; Items = $items; OldItems = $items.NewOf.Count
+        Runes = @($items.NewOf.Keys | Where-Object { $_ -match '^r\d\ds$' }).Count
+        Tc = $tc.Changes; CubeOut = $cm.Out; CubeIn = $cm.In; CubeKept = $cm.Kept; CubeConv = $cm.Conv
+        Extra = @{ $TC_BIN = $tc.Extra; $CM_BIN = $cm.Extra }
     }
 }
 
@@ -621,6 +687,39 @@ function Get-PatchOfBackup($now) {
 # started with -txt (testing mode), and from then on reads them instead of pd2data.mpq.
 # A loose copy that's the mod's original gets the same fix (backed up as
 # <file>.stock-backup); any other version is left alone, with a warning.
+#
+# The game compiles those copies from the text files. Where the mod's own compiled table
+# has records its text doesn't (14.0.2's cubemain.bin), the game's copy can't equal the
+# mod's. There a compiled copy is recognised by checking it against the text instead.
+$TXT_OF = @{ $TC_BIN = $TC_TXT; $CM_BIN = $CM_TXT }
+
+# The fix run on a copy of the compiled table $b, against the text $txt.
+function Invoke-Repair([string]$name, [byte[]]$b, [byte[]]$txt, $items) {
+    $bin = [byte[]]$b.Clone()
+    $r = if ($name -eq $TC_BIN) { Repair-Tc $bin (Read-Txt $txt "TreasureClassEx.txt") $items }
+         else { Repair-Cube $bin (Read-Txt $txt "CubeMain.txt") $items }
+    $r | Add-Member -NotePropertyName Bin -NotePropertyValue $bin
+    $r
+}
+function Test-FromText($fix, [string]$name) { $TXT_OF.ContainsKey($name) -and $fix.Extra[$name] -gt 0 }
+
+# What the fix makes of the loose copy $b of $name, or $null if $b isn't the mod's.
+function Get-LooseFix($fix, [string]$name, [byte[]]$b) {
+    if ([SpPlus.Mpq]::Same($b, $fix.Mpq.Read($name))) { return , ([byte[]]$fix.Files[$name]) }
+    if (-not (Test-FromText $fix $name)) { return $null }
+    $r = Invoke-Repair $name $b ($fix.Mpq.Read($TXT_OF[$name])) $fix.Items
+    if ($r.Error -or $r.Changes -eq 0) { return $null }
+    , $r.Bin
+}
+# Is the loose copy $b a table the game compiled from the fixed text?
+function Test-LooseFixed($fix, [string]$name, [byte[]]$b) {
+    if (-not (Test-FromText $fix $name)) { return $false }
+    $t = $TXT_OF[$name]; $txt = $null
+    if ($fix.Files.Contains($t)) { $txt = [byte[]]$fix.Files[$t] } else { $txt = $fix.Mpq.Read($t) }
+    $r = Invoke-Repair $name $b $txt $fix.Items
+    (-not $r.Error) -and $r.Changes -eq 0
+}
+
 function Update-Loose($fix) {
     $changed = 0
     foreach ($name in $fix.Files.Keys) {
@@ -629,24 +728,30 @@ function Update-Loose($fix) {
         $short = $name.Substring($name.IndexOf("excel\") + 6)
         $b = [IO.File]::ReadAllBytes($loose)
         if ([SpPlus.Mpq]::Same($b, [byte[]]$fix.Files[$name])) { Ok "loose copy data\global\excel\$short is patched too"; continue }
-        if (-not [SpPlus.Mpq]::Same($b, $fix.Mpq.Read($name))) {
+        $new = Get-LooseFix $fix $name $b
+        if ($null -eq $new) {
+            if (Test-LooseFixed $fix $name $b) {
+                Ok "loose copy data\global\excel\$short has the fix too (the game compiled it from the patched text)"
+                continue
+            }
             Write-Host ("  [!] data\global\excel\$short is a different version from the mod's, so it's left as is.`n" +
                         "      The game reads it instead of pd2data.mpq - move it out of that folder to use the fix.") -ForegroundColor Yellow
             continue
         }
         Copy-Item -LiteralPath $loose "$loose.stock-backup" -Force
-        [IO.File]::WriteAllBytes($loose, [byte[]]$fix.Files[$name])
+        [IO.File]::WriteAllBytes($loose, $new)
         Ok "patched the loose copy data\global\excel\$short (testing mode reads it first)"
         $changed++
     }
     $changed
 }
-# Puts back the loose copies Update-Loose changed.
+# Puts back the loose copies Update-Loose changed: those that are the fix of their backup.
 function Restore-Loose($fix) {
     foreach ($name in $fix.Files.Keys) {
         $loose = Join-Path $Path $name
         if (-not (Test-Path -LiteralPath $loose) -or -not (Test-Path -LiteralPath "$loose.stock-backup")) { continue }
-        if (-not [SpPlus.Mpq]::Same([IO.File]::ReadAllBytes($loose), [byte[]]$fix.Files[$name])) { continue }
+        $want = Get-LooseFix $fix $name ([IO.File]::ReadAllBytes("$loose.stock-backup"))
+        if ($null -eq $want -or -not [SpPlus.Mpq]::Same([IO.File]::ReadAllBytes($loose), $want)) { continue }
         Copy-Item -LiteralPath "$loose.stock-backup" $loose -Force
         Ok "restored the loose copy data\global\excel\$($name.Substring($name.IndexOf("excel\") + 6))"
     }
@@ -714,6 +819,14 @@ Ok ("{0} `"(old)`" items in the data ({1} runes, {2} gems and skulls)" -f $fix.O
 Ok ("treasure classes: {0} drops of old items" -f $fix.Tc)
 Ok ("cube: {0} recipe results and {1} ingredients are old items" -f $fix.CubeOut, $fix.CubeIn)
 if ($fix.CubeKept -gt 0) { Info ("{0} recipes for old items that already exist for Season 14 items stay for the old ones" -f $fix.CubeKept) }
+if ($fix.CubeConv -gt 0) { Info ("{0} recipes that turn old items into their Season 14 items stay as they are" -f $fix.CubeConv) }
+if ($fix.Extra[$CM_BIN] -gt 0) {
+    Info ("cubemain.bin has {0} recipes that CubeMain.txt doesn't (the mod is built that way)." -f $fix.Extra[$CM_BIN])
+    Info "Those get the fix in cubemain.bin only. Testing mode builds its recipes from the text, so it doesn't have them."
+}
+if ($fix.Extra[$TC_BIN] -gt 0) {
+    Info ("treasureclassex.bin has {0} treasure classes that TreasureClassEx.txt doesn't; those get the fix there only." -f $fix.Extra[$TC_BIN])
+}
 
 $new = $fix.Mpq.Rebuild($fix.Files)
 $n = Test-Rebuilt $fix.Mpq $new $fix.Files
@@ -734,7 +847,7 @@ Write-Host "  ============================================" -ForegroundColor Gre
 Write-Host "   PATCHED" -ForegroundColor Green
 Write-Host "  ============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Monsters, gem boxes and rune downgrades now give Season 14 runes and gems."
+Write-Host "  Monsters and the cube's recipes now give Season 14 runes and gems."
 Write-Host "  Old runes and gems you already have stay old; they still work in the"
 Write-Host "  rune upgrade recipes and in the old-item downgrades (which now give new runes)."
 Write-Host ""

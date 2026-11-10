@@ -218,11 +218,13 @@ which silently removes the patch — the stat ranges just disappear again.
 You don't need a new version of the patch for each PD2 update. It doesn't use fixed
 addresses — it finds the code to change by searching for byte patterns, so it adapts
 to new builds automatically. (Tested on both Season 13 builds, `579987ED` and
-`538A77B7` — the `s13p2m2` mirror installs `538A77B7` — and on five Season 14 builds:
-open beta, launch, the first hotfix (Patch #1), Patch #2 and Patch #2 maint1, plus the
+`538A77B7` — the `s13p2m2` mirror installs `538A77B7` — and on six Season 14 builds:
+open beta, launch, the first hotfix (Patch #1), Patch #2, Patch #2 maint1 and
+Patch #2 maint2, plus the
 [Single Player Plus](https://github.com/Lukaszpg/PD2-Single-Player-Plus-mod) mod's
-14.0.1 DLL, which is the launch build with the mod's own changes.) Running it on an
-already-patched DLL is harmless; it just says `ALREADY PATCHED`.
+14.0.1 and 14.0.2 DLLs, which are the launch build and the Patch #1 build with the
+mod's own changes.) Running it on an already-patched DLL is harmless; it just says
+`ALREADY PATCHED`.
 
 **A new season** can change more than addresses: Season 14 needed 4.0.0. If a future
 season changes the PD2 hooks this patch relies on, it stops with *this version of PD2
@@ -245,14 +247,16 @@ the stackable one, and the Season 13 stacks (`r01s`, `gpws`, …) are only kept 
 go into the stash's Runes / Gems tabs and can't be socketed.
 
 The [Single Player Plus](https://github.com/Lukaszpg/PD2-Single-Player-Plus-mod) mod
-(14.0.1) still uses the old ones in its `pd2data.mpq`
+(14.0.1 and 14.0.2) still uses the old ones in its `pd2data.mpq`
 ([its issue #46](https://github.com/Lukaszpg/PD2-Single-Player-Plus-mod/issues/46)):
 
 - **monsters drop old runes**: its `Runes 1`–`17` treasure classes name `r01s`–`r33s`,
   where PD2's own Season 14 data names `r01`–`r33`;
-- **the cube gives old items**: the rune downgrades and Gheed's gem boxes;
-- **the cube asks for old items**: the crafting infusions, the downgrades from Um up
-  and the rainbow facets. New runes and gems don't fit them.
+- **the cube gives old items**: the rune downgrades (in 14.0.1 Gheed's gem boxes too);
+- **the cube asks for old items**: the crafting infusions and the downgrades from Um up
+  (in 14.0.1 the rainbow facets too). New runes and gems don't fit them.
+
+14.0.2 fixed the gem boxes and the rainbow facets itself. The rest is as in 14.0.1.
 
 It isn't caused by PlugY or by the PlugY patch: it happens without PlugY too.
 
@@ -267,18 +271,26 @@ first. `Restore-SPPlus.bat` puts that back.
   downgrades exist in the mod twice, for new and old runes. The fix leaves the old-rune
   copy as it is, and it now gives new runes. So an old rune can still be turned into
   new ones there.
+- **14.0.2's recipes for old perfect gems stay.** Its compiled `cubemain.bin` has 7
+  recipes that turn 50 old perfect gems (or skulls) into 50 Season 14 ones. The fix
+  leaves them as they are. They're only in the compiled table, not in the mod's
+  `CubeMain.txt`, so testing mode doesn't have them.
 - **Testing mode** (`-direct -txt`): the game writes compiled copies of the tables to
   `ProjectD2\data\global\excel` and from then on reads those instead of `pd2data.mpq`.
   The fix patches the copies of `treasureclassex.bin` and `cubemain.bin` there too, if
   they're the mod's originals, and keeps the originals as `….stock-backup`. A copy that's
   some other version is left as is, with a warning: move it out of that folder to use
-  the fix.
+  the fix. After updating the mod, move all the `.bin` files out of that folder (the
+  `….stock-backup` files can stay): they were compiled from the previous version's data,
+  and the game rebuilds them the next time you enter a game.
 - **After updating the mod**, run `Run-SPPlus-Patch.bat` again. On data that doesn't
   need it (PD2's own, or a mod version that fixed this) it says *nothing to fix* and
   changes nothing.
 - Which items are old is read from the mod's data (PD2 names them `… (old)`). Every
   compiled record is checked against its `.txt` row first. If something doesn't
-  match, it stops and changes nothing. The changed files are written uncompressed at
+  match, it stops and changes nothing. A compiled table may have records after the
+  last `.txt` row (14.0.2's `cubemain.bin` has 10); those are fixed in the compiled
+  table only. The changed files are written uncompressed at
   the end of the archive, the way Blizzard stores half of `d2data.mpq`, and then the
   whole archive is read back and checked.
 

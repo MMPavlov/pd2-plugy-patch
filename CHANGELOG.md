@@ -32,6 +32,11 @@ byte-identical to 6.0.0, so a DLL 6.0.0 patched stays `ALREADY PATCHED`.
   - Patch #2 maint1 with an unknown instruction between a check's `cmp` and `jne` is
     refused with signature 7.
 - Not tried in game on Patch #2 or maint1.
+- 2026-11-10, no change to the patch: also checked on Patch #2 maint2 (built 4 Nov
+  18:21 UTC) and on the Single Player Plus mod's 14.0.2 DLL (the Patch #1 build plus the
+  mod's own 35 bytes and `.uber` section). On both: fresh patch, re-run, restore, patch
+  again, the independent verifier and the emulator. The patch's 859 bytes don't touch
+  the mod's changes. Not tried in game on either.
 
 ## 6.0.0 — 2026-10-28
 
