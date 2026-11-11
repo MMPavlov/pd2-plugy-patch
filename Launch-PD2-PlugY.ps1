@@ -17,6 +17,10 @@
       shortcut goes through cmd.exe, which is 64-bit, so it hits the same error.
       Use Launch-PD2-PlugY (testing).bat instead, or pass -Testing.
 
+    -plugy
+      PD2 needs -plugy on its command line to run alongside PlugY. If Param= in
+      PlugY.ini's [LAUNCHING] section doesn't have it, the launcher passes it.
+
     USAGE
       Double-click Launch-PD2-PlugY.bat            (normal)
       Double-click Launch-PD2-PlugY (testing).bat  (testing modpack)
@@ -29,7 +33,7 @@ param([string]$Path, [int]$MaxAttempts = 10, [switch]$NoPause,
       [switch]$Testing, [string]$GameArgs = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "6.0.1"
+$VERSION = "6.1.0"
 
 # extra arguments for PlugY.exe, which passes them on to Game.exe
 $extra = @()
@@ -56,6 +60,27 @@ if ([Environment]::Is64BitProcess) {
 if (-not $Path) { $Path = $PSScriptRoot }
 if (-not $Path) { $Path = (Get-Location).Path }
 $plugyExe = Join-Path $Path "PlugY.exe"
+
+# PD2 has to see -plugy on its command line. Without it PD2 doesn't know PlugY is
+# there: the patch then can't hide PD2's stash page tabs (P, I-IX), and materials go
+# into PD2's own pd2_shared.stash. PlugY.exe adds Param= from PlugY.ini's [LAUNCHING]
+# section to what it's given, so if Param= doesn't have it, pass it ourselves.
+function Get-PlugyParam([string]$ini) {
+    if (-not (Test-Path -LiteralPath $ini)) { return $null }
+    $section = ""
+    foreach ($line in [IO.File]::ReadAllLines($ini)) {
+        $t = $line.Trim()
+        if ($t -match '^\[([^\]]*)\]') { $section = $Matches[1].Trim(); continue }
+        if ($section -eq "LAUNCHING" -and $t -match '^Param\s*=(.*)$') { return $Matches[1].Trim() }
+    }
+    ""
+}
+$iniParam = Get-PlugyParam (Join-Path $Path "PlugY.ini")
+$addedPlugy = $false
+if (-not (@("$iniParam" -split '\s+') -ccontains "-plugy") -and -not ($extra -ccontains "-plugy")) {
+    $extra += "-plugy"
+    $addedPlugy = $true
+}
 
 function Stop-Here([int]$code) {
     if (-not $NoPause) {
@@ -118,6 +143,10 @@ Write-Host ""
 Write-Host "PD2 + PlugY launcher  v$VERSION" -ForegroundColor Cyan
 Write-Host "------------------------------"
 if ($Testing) { Write-Host "  mode: TESTING (modded text files: -direct -txt)" -ForegroundColor Magenta }
+if ($addedPlugy) {
+    if ($null -eq $iniParam) { Write-Host "  no PlugY.ini here - adding -plugy" -ForegroundColor Yellow }
+    else { Write-Host "  PlugY.ini's Param= has no -plugy - adding it" -ForegroundColor Yellow }
+}
 if ($extra.Count -gt 0) { Write-Host ("  PlugY.exe " + ($extra -join ' ')) -ForegroundColor DarkGray }
 
 if (-not (Test-Path $plugyExe)) {

@@ -6,6 +6,38 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 6.1.0 — 2026-11-11
+
+The patch itself is unchanged: what's written into `ProjectDiablo.dll` is byte-identical
+to 6.0.1, so a DLL patched by 6.0.x stays `ALREADY PATCHED`.
+
+### Added
+- **The launcher adds `-plugy` when `PlugY.ini` doesn't have it.** PD2 needs `-plugy` on
+  its command line to know PlugY is there. Without it, the patch can't hide PD2's stash
+  page tabs (P, I–IX), which then show behind PlugY's page buttons, and gems and runes
+  go into PD2's own `pd2_shared.stash`. `PlugY.exe` adds `Param=` from the `[LAUNCHING]`
+  section of `PlugY.ini` to the arguments it's given. So when `Param=` has no `-plugy`,
+  or there's no `PlugY.ini`, both launchers (normal and testing) pass `-plugy` to
+  `PlugY.exe` themselves and say so. Only the exact lowercase `-plugy` counts as already
+  there; a second one does no harm.
+
+### Changed
+- `Patch-PD2-PlugY.ps1` reports 6.1.0 too (no functional change).
+- README, Troubleshooting: PD2's tabs showing behind PlugY's page buttons, and testing
+  mode missing a Season 14 runeword (Jealousy) because of older tables in
+  `ProjectD2\data\global\excel`.
+
+### Checked
+- The launcher, with a stand-in `PlugY.exe` that records its command line, started from
+  64-bit PowerShell (it hands over to 32-bit PowerShell itself) in 11 cases: `Param=`
+  with and without `-plugy`, `-PlugY` in other case, no `PlugY.ini`, `-plugy` only in
+  another section or commented out, lowercase section and key names, an empty `Param=`,
+  testing mode, `-plugy` given in `-GameArgs`, and a copy of a real `PlugY.ini`. Also
+  `Launch-PD2-PlugY (testing).bat` started through `cmd.exe`.
+- The patcher on the Single Player Plus 14.0.2 DLL and on Patch #2 maint2: a fresh patch
+  gives the same DLL as 6.0.1, and a DLL 6.0.1 patched says `ALREADY PATCHED`.
+- Not tried in game.
+
 ## 6.0.1 — 2026-11-04
 
 Fix only. What's written into `ProjectDiablo.dll` on the builds 6.0.0 supports is

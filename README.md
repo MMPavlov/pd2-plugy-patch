@@ -165,8 +165,10 @@ For a game that already has PD2 (Season 13 or 14) and PlugY:
    ```
 
    The window stays open until you press Enter.
-5. Open `PlugY.ini` and check the `[LAUNCHING]` section. `Param=` must include
-   **`-plugy`** (what else is on that line is up to your setup), for example:
+5. Open `PlugY.ini` and check the `[LAUNCHING]` section. `Param=` should include
+   **`-plugy`** (what else is on that line is up to your setup). From 6.1.0,
+   `Launch-PD2-PlugY.bat` adds `-plugy` itself when it's missing there, but `PlugY.exe`
+   started any other way needs it in `Param=`. For example:
 
    ```
    Param=-3dfx -plugy
@@ -321,7 +323,8 @@ locks the DLL while the game is open. Nothing was changed.
 **`ALREADY PATCHED` but still no stat ranges**
 The DLL is fine — the problem is how the game is launched:
 - launch through **`Launch-PD2-PlugY.bat`** (or `PlugY.exe`), not the PD2 launcher or `Game.exe`
-- `Param=` in `PlugY.ini` must include `-plugy`
+- the game needs `-plugy`: `Launch-PD2-PlugY.bat` (6.1.0 or newer) adds it, otherwise
+  `Param=` in `PlugY.ini` must include it
 
 > How `PlugY.exe` builds the game's command line:
 > `Game.exe [-w] <arguments given to PlugY.exe> <Param= from PlugY.ini>`.
@@ -331,6 +334,15 @@ The DLL is fine — the problem is how the game is launched:
 **Every stash page button goes to the next page** (Season 14)
 That's what versions before 4.0.0 do on Season 14. Run `Run-Patch.bat` from 4.0.0 or
 newer; it upgrades the DLL.
+
+**PD2's stash page tabs (P, I–IX) show behind PlugY's page buttons** (Season 14)
+From 6.0.0 the patch hides them under PlugY. If you still see them, either:
+- the DLL was patched by an older version: run `Run-Patch.bat` from the current
+  release. It says *patched by an older version of this script - upgrading* and fixes it.
+- the game was started without `-plugy`, so PD2 doesn't know PlugY is there. That also
+  sends gems and runes into PD2's own `pd2_shared.stash` instead of `Save\shared.stash`.
+  Start the game with `Launch-PD2-PlugY.bat` (6.1.0 or newer adds `-plugy` itself), or add
+  `-plugy` to `Param=` in `PlugY.ini`.
 
 **`Unable to enter game, generic bad file`** (Single Player Plus mod, after a PD2 update)
 The PD2 launcher's update replaced the mod's `ProjectDiablo.dll`, `BH.dll` and
@@ -349,6 +361,22 @@ says `Error Loading:<character>`. The saves themselves are fine:
    `.bin` files in `ProjectD2\data\global\excel` from PD2's data. Move those `.bin` files
    out of that folder (the `….stock-backup` files can stay), and it rebuilds them from
    the mod's data the next time you enter a game.
+
+**Testing mode: a Season 14 runeword is missing, e.g. Jealousy**
+The item shows without its runeword in testing mode, and with it in normal mode. In
+testing mode the game takes its tables from `ProjectD2\data\global\excel` first: the
+`.txt` files there replace the game's own, and the compiled `.bin` files there are used
+instead of the game's data. If those came from older data, anything newer is missing.
+Jealousy is an example: in Season 13's runeword table it's an unfinished placeholder,
+and Season 14 made it a javelin runeword. TDL's testing modpack, and any `.bin` files the
+game compiled while you played testing mode on Season 13 or an older version of a mod,
+are older data. Until that folder is cleaned up, don't play a Season 14 character in
+testing mode.
+1. Close the game and back up `Diablo II\Save`.
+2. Move the `.bin` files out of `ProjectD2\data\global\excel`, and any `.txt` files you
+   didn't put there for the current season (the `….stock-backup` files can stay).
+3. Start in testing mode. The game rebuilds the `.bin` files from the current data the
+   next time you enter a game.
 
 **`FAILED: signature ... not found`**
 PD2 changed its code enough that the patterns no longer match. Nothing was written,
