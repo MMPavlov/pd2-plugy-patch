@@ -6,6 +6,43 @@ If you're helping someone, ask which version they have first.
 Versioning: **MAJOR** changes what gets written into the DLL, **MINOR** adds
 features or usability changes, **PATCH** is fixes only.
 
+## 6.2.0 — 2026-11-12
+
+The patch and the launcher are unchanged apart from their version number. What's
+written into `ProjectDiablo.dll` is byte-identical to 6.0.1 and 6.1.0.
+
+### Added
+- **`PD2-Diag.bat` / `PD2-Diag.ps1`: a report for when the game won't start through
+  PlugY**, for example PlugY's own `EXCEPTION_ACCESS_VIOLATION` box or `Read process
+  memory failed`. It writes `PD2-diag.txt` in the game folder and changes nothing else.
+  The report covers:
+  - the game's programs and DLLs: sizes, dates, hashes, header fields, and whether each
+    matches PD2's own file list (`local_metadata.json`);
+  - `PlugY.ini`'s launch settings and the command line `PlugY.exe` gives the game;
+  - the end of `PlugY.log` and of D2's own log;
+  - compatibility mode and exploit protection for the game, the antivirus Windows
+    knows about, and `Game.exe`/`PlugY.exe` crashes in Windows' Application log;
+  - three starts of `Game.exe` the way `PlugY.exe` does it, as its debugger: where
+    `D2gfx.dll` loaded, whether `PlugY.exe` would accept it, and if not, where the first
+    access violation is. When `PlugY.exe` would accept it, the game is closed before any
+    of its own code runs.
+
+  The Windows user name, profile folder and computer name in the report are replaced by
+  `%USERNAME%`, `%USERPROFILE%` and `%COMPUTERNAME%`.
+- README, Troubleshooting: what PlugY's `EXCEPTION_ACCESS_VIOLATION` box means.
+
+### Checked
+- The report on a copy of a Season 14 game's programs (Single Player Plus 14.0.2 on
+  Patch #2 maint2): 3 starts, each accepted and closed at `D2gfx.dll`, with no game
+  process left.
+- The other two outcomes with a test program:
+  - a `D2gfx.dll` loaded away from 6FA80000 is reported as *Read process memory
+    failed*, with the module in its place;
+  - an access violation is reported with its address and module.
+- The rest of the report, read-only, on a real game folder.
+- Launcher and patcher: only the version number changed.
+- Not yet tried on a machine that shows the error.
+
 ## 6.1.0 — 2026-11-11
 
 The patch itself is unchanged: what's written into `ProjectDiablo.dll` is byte-identical

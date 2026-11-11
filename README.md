@@ -26,6 +26,8 @@ when reporting a problem.
 | `Restore-Original.bat` | double-click to undo and put the original DLL back |
 | `Patch-PD2-PlugY.ps1` | the actual patcher (the `.bat` files just run it) |
 | `CHANGELOG.md` | what changed in each version |
+| `PD2-Diag.bat` | double-click for a report on why the game won't start through PlugY (`PD2-diag.txt`, see [Troubleshooting](#troubleshooting)); changes nothing |
+| `PD2-Diag.ps1` | that report itself |
 | `Run-SPPlus-Patch.bat` | *Single Player Plus mod only:* double-click to fix its `(old)` runes and gems (see [below](#single-player-plus-mod-old-runes-and-gems)) |
 | `Restore-SPPlus.bat` | double-click to undo that and put the mod's original `pd2data.mpq` back |
 | `Patch-SPPlus.ps1` | that fix itself; separate from the PlugY patch, works with or without PlugY |
@@ -310,6 +312,24 @@ the stat-ranges patch: it happens before PlugY even loads its DLL.
 
 (Measured on one machine: 12 of 12 launches from 64-bit parents failed, 5 of 5 from
 a 32-bit parent worked. It started between 17 Sep and 21 Oct 2026.)
+
+If the launcher still gives up, run `PD2-Diag.bat` (see the next entry). It shows where
+`D2gfx.dll` loaded and what took its usual place.
+
+**`EXCEPTION_ACCESS_VIOLATION` in a box titled *PlugY* — the game won't start**
+The box comes from `PlugY.exe`, before PlugY is in the game. `PlugY.exe` starts
+`Game.exe` under its control, waits for the game's `D2gfx.dll` and checks that it's the
+1.13c file it knows. Then it loads PlugY and lets go. The box means that check didn't
+pass: either `D2gfx.dll` is a different file, or something (security software, for
+example) kept `PlugY.exe` from reading the game's memory. So the game ran on without
+PlugY, still under `PlugY.exe`'s control, and crashed. Neither the patch nor the launcher
+causes it, and neither `PlugY.log` nor D2's own log records it.
+
+To find out which it is, close the game and double-click **`PD2-Diag.bat`**. It writes
+`PD2-diag.txt` and opens it; send that to whoever is helping you. The report starts the
+game three times the way `PlugY.exe` does and says what happened to `D2gfx.dll`, and
+lists the game's files against PD2's own file list. Apart from writing the report, it
+changes nothing.
 
 **The window flashed open and closed / "it went so fast it didn't do anything"**
 Use `Run-Patch.bat` instead of right-click → *Run with PowerShell*. Older versions
